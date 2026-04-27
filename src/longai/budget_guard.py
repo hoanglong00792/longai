@@ -109,8 +109,12 @@ class BudgetGuard:
             except Unauthorized:
                 raise  # F7: never fall back on 401
             except (RateLimitError, APIStatusError, APIConnectionError,
-                    APITimeoutError, httpx.HTTPError, asyncio.TimeoutError) as e:
-                # F8-F11: retryable. Cool the model and try the next.
+                    APITimeoutError, httpx.HTTPError, asyncio.TimeoutError,
+                    CallTimeout) as e:
+                # F8-F11 + slow-free-model timeout: retryable.
+                # CallTimeout (per-call wall-clock exceeded) benches the slow model
+                # and tries the next — a free 120B model timing out should not kill
+                # the whole call when faster models exist in the chain.
                 self._p.set_cooldown(model, until_ts=int(time.time()) + COOLDOWN_S)
                 continue
         raise AllModelsCooled(f"all of {self._models} are on cooldown")

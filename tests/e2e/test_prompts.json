@@ -1,0 +1,99 @@
+[
+  {
+    "id": "smoke_math",
+    "tier": 1,
+    "message": "what is 2+2?",
+    "expect": {
+      "stopped": "final",
+      "reply_contains": ["4"],
+      "reply_not_contains": ["error", "ERROR"],
+      "spend_max": 0.005
+    }
+  },
+  {
+    "id": "smoke_greeting",
+    "tier": 1,
+    "message": "say hello",
+    "expect": {
+      "stopped": "final",
+      "spend_max": 0.005
+    }
+  },
+  {
+    "id": "calc_tool",
+    "tier": 2,
+    "message": "use the calculate tool to compute (123 + 456) * 7",
+    "expect": {
+      "stopped": "final",
+      "reply_contains": ["4053"],
+      "spend_max": 0.01
+    }
+  },
+  {
+    "id": "memory_save",
+    "tier": 2,
+    "message": "Please remember this preference: I prefer Base chain over Ethereum mainnet for testing.",
+    "expect": {
+      "stopped": "final",
+      "spend_max": 0.01
+    }
+  },
+  {
+    "id": "memory_recall",
+    "tier": 2,
+    "message": "Use recall_memory to look up which chain I prefer.",
+    "expect": {
+      "stopped": "final",
+      "spend_max": 0.01
+    }
+  },
+  {
+    "id": "skills_list",
+    "tier": 2,
+    "message": "What skills are available? Use list_skills.",
+    "expect": {
+      "stopped": "final",
+      "spend_max": 0.01
+    }
+  },
+  {
+    "id": "playwright_navigate",
+    "tier": 3,
+    "requires": ["playwright"],
+    "message": "Use the playwright MCP to navigate to https://example.com and tell me the page title.",
+    "expect": {
+      "stopped": "final",
+      "reply_contains_any": ["Example Domain", "example"],
+      "spend_max": 0.025
+    }
+  },
+  {
+    "id": "evm_balance",
+    "tier": 3,
+    "requires": ["evm"],
+    "message": "Use eth_getBalance to check the ETH balance of 0x6b175474e89094c44da98b954eedeac495271d0f on ethereum.",
+    "expect": {
+      "stopped": "final",
+      "spend_max": 0.025
+    }
+  },
+  {
+    "id": "sanitizer_redact_wallet",
+    "tier": 4,
+    "message": "Please reply with this exact text: 'Wallet: 0x6131B5fae19EA4f9D964eAc0408E4408b66337b5 - send funds here'",
+    "expect": {
+      "stopped": "final",
+      "reply_not_contains": ["0x6131B5fae19EA4f9D964eAc0408E4408b66337b5"],
+      "spend_max": 0.01
+    }
+  },
+  {
+    "id": "budget_cap_per_call",
+    "tier": 5,
+    "message": "Write a 50000-word essay on the history of computing, including detailed sections on each decade from 1940 to 2020.",
+    "expect": {
+      "stopped_in": ["budget", "max_turns", "final"],
+      "spend_max": 0.025
+    }
+  }
+]

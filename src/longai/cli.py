@@ -88,13 +88,20 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 async def _run_async(args: argparse.Namespace) -> int:
+    import time
     prompt = " ".join(args.prompt)
-    tracer = Tracer(args.trace_dir)
+    started_ts = int(time.time())
     try:
         cfg, p, mem, mcp, loop = await _build_stack(args.config, require_telegram=False)
     except ConfigError as e:
-        print(json.dumps(format_error(e, trace_id=tracer.run_id)))
+        # No persistence/tracer yet — emit a minimal error envelope and bail.
+        tmp = Tracer(args.trace_dir)
+        print(json.dumps(format_error(e, trace_id=tmp.run_id)))
         return 1
+
+    # Resolve trace_dir: CLI flag > LONGAI_TRACE_DIR env > config (already merged)
+    effective_trace_dir = args.trace_dir or cfg.trace_dir
+    tracer = Tracer(effective_trace_dir)
 
     try:
         history = p.load_history(args.user_id, max_msgs=20, max_tokens=8000)
@@ -113,9 +120,14 @@ async def _run_async(args: argparse.Namespace) -> int:
         envelope["result"] = sanitize_outbound(envelope["result"])  # I11
         tracer.output(envelope)
         print(json.dumps(envelope))
-        # Persist
+        # Persist message history + 1-row trace summary (always, even when --trace-dir unset)
         p.append_message(args.user_id, "user", prompt, tokens=result.prompt_tokens)
         p.append_message(args.user_id, "assistant", result.text, tokens=result.completion_tokens)
+        p.log_trace(
+            run_id=tracer.run_id, chat_id=args.user_id, started_ts=started_ts,
+            stopped=result.stopped, spend_usd=result.spend_usd, turns=result.turns,
+            error=result.error,
+        )
         return 0 if result.stopped == "final" else 1
     finally:
         await mcp.stop()
@@ -141,6 +153,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
 
 
 async def _chat_async(args: argparse.Namespace) -> int:
+    import time
+    import uuid
     cfg, p, mem, mcp, loop = await _build_stack(args.config, require_telegram=False)
     print("longai chat — type a message or /exit to quit")
     try:
@@ -154,6 +168,7 @@ async def _chat_async(args: argparse.Namespace) -> int:
                 break
             if not user:
                 continue
+            started_ts = int(time.time())
             history = p.load_history(args.user_id)
             catalog = await _skill_catalog(mcp)
             sysprompt = mem.build_system_prompt(
@@ -167,6 +182,11 @@ async def _chat_async(args: argparse.Namespace) -> int:
             _print_to_user(res.text)
             p.append_message(args.user_id, "user", user, tokens=res.prompt_tokens)
             p.append_message(args.user_id, "assistant", res.text, tokens=res.completion_tokens)
+            p.log_trace(
+                run_id=str(uuid.uuid4()), chat_id=args.user_id, started_ts=started_ts,
+                stopped=res.stopped, spend_usd=res.spend_usd, turns=res.turns,
+                error=res.error,
+            )
     finally:
         await mcp.stop(); p.close()
     return 0

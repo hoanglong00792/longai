@@ -60,6 +60,8 @@ async def _run_bot_async(args: argparse.Namespace) -> None:
 
     @_auth(cfg.allowed_chat_ids)
     async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        import time
+        import uuid
         chat_id = update.effective_chat.id
         msg = update.effective_message
         # F21 — voice/image rejected with text reply
@@ -67,6 +69,7 @@ async def _run_bot_async(args: argparse.Namespace) -> None:
             await msg.reply_text("Voice/image inputs not supported in v1. Send text.")
             return
         user = msg.text
+        started_ts = int(time.time())
         history = p.load_history(chat_id)
         catalog = await _skill_catalog(mcp)
         sysprompt = mem.build_system_prompt(
@@ -81,6 +84,11 @@ async def _run_bot_async(args: argparse.Namespace) -> None:
         await msg.reply_text(reply)
         p.append_message(chat_id, "user", user, tokens=res.prompt_tokens)
         p.append_message(chat_id, "assistant", res.text, tokens=res.completion_tokens)
+        p.log_trace(
+            run_id=str(uuid.uuid4()), chat_id=chat_id, started_ts=started_ts,
+            stopped=res.stopped, spend_usd=res.spend_usd, turns=res.turns,
+            error=res.error,
+        )
 
     @_auth(cfg.allowed_chat_ids)
     async def on_help(update, context):
