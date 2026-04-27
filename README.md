@@ -119,7 +119,8 @@ Full details, alternative providers (local Ollama), and troubleshooting in
 ## Daily commands
 
 ```bash
-./longai run "<prompt>"      # single-shot, prints JSON envelope
+./longai run "<prompt>"      # single-shot — text reply when interactive, JSON when piped
+./longai run --json "..."    # force JSON envelope (model, turns, spend, trace_id)
 ./longai chat                # interactive REPL (no Telegram)
 ./longai bot                 # Telegram polling
 ./longai test                # golden prompts vs llmstub (cost = $0)

@@ -181,7 +181,7 @@ while IFS=$'\t' read -r ID CASE_TIER MESSAGE_JSON EXPECT_JSON; do
 
   # Run the case. Capture stdout (envelope JSON) and exit code.
   set +e
-  ENVELOPE="$($ARCH_PREFIX "${PYBIN}" -m longai run --user-id -1 --trace-dir "${CASE_TRACE}" "${MAX_TURNS_ARGS[@]}" -- "${MESSAGE}" 2>"${CASE_TRACE}/stderr.txt")"
+  ENVELOPE="$($ARCH_PREFIX "${PYBIN}" -m longai run --json --user-id -1 --trace-dir "${CASE_TRACE}" "${MAX_TURNS_ARGS[@]}" -- "${MESSAGE}" 2>"${CASE_TRACE}/stderr.txt")"
   RC=$?
   set -e
 

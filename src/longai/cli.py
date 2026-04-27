@@ -165,6 +165,27 @@ def cmd_refresh(args: argparse.Namespace) -> int:
 import os
 
 
+def _resolve_output_mode(args: argparse.Namespace) -> str:
+    """Return ``'json'`` or ``'text'``. Explicit flags win; default is TTY-aware."""
+    if getattr(args, "output_json", False):
+        return "json"
+    if getattr(args, "output_text", False):
+        return "text"
+    return "text" if sys.stdout.isatty() else "json"
+
+
+def _emit(envelope: dict, mode: str) -> None:
+    """Write envelope to stdout in the requested format. Errors go to stderr in text mode."""
+    if mode == "json":
+        print(json.dumps(envelope))
+        return
+    err = envelope.get("error")
+    if err:
+        print(envelope.get("result") or f"Error: {err}", file=sys.stderr)
+        return
+    print(envelope.get("result", ""))
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     return asyncio.run(_run_async(args))
 
@@ -173,6 +194,7 @@ async def _run_async(args: argparse.Namespace) -> int:
     import time
     prompt = " ".join(args.prompt)
     started_ts = int(time.time())
+    output_mode = _resolve_output_mode(args)
     try:
         cfg, p, mem, mcp, loop = await _build_stack(
             args.config, require_telegram=False,
@@ -181,7 +203,7 @@ async def _run_async(args: argparse.Namespace) -> int:
     except ConfigError as e:
         # No persistence/tracer yet — emit a minimal error envelope and bail.
         tmp = Tracer(args.trace_dir)
-        print(json.dumps(format_error(e, trace_id=tmp.run_id)))
+        _emit(format_error(e, trace_id=tmp.run_id), output_mode)
         return 1
 
     # Resolve trace_dir: CLI flag > LONGAI_TRACE_DIR env > config (already merged)
@@ -203,7 +225,7 @@ async def _run_async(args: argparse.Namespace) -> int:
                 "error": fr.error,
             }
             tracer.output(envelope)
-            print(json.dumps(envelope))
+            _emit(envelope, output_mode)
             p.append_message(args.user_id, "user", prompt, tokens=0)
             p.append_message(args.user_id, "assistant", text, tokens=0)
             p.log_trace(
@@ -232,7 +254,7 @@ async def _run_async(args: argparse.Namespace) -> int:
         envelope = format_result(result, model=result.model_used, trace_id=tracer.run_id)
         envelope["result"] = sanitize_outbound(envelope["result"])  # I11
         tracer.output(envelope)
-        print(json.dumps(envelope))
+        _emit(envelope, output_mode)
         # Persist message history + 1-row trace summary (always, even when --trace-dir unset)
         p.append_message(args.user_id, "user", prompt, tokens=result.prompt_tokens)
         p.append_message(args.user_id, "assistant", result.text, tokens=result.completion_tokens)
