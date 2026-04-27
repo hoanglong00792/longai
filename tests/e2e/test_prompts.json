@@ -155,5 +155,86 @@
       "stopped_in": ["budget", "max_turns", "final"],
       "spend_max": 0.025
     }
+  },
+
+  {
+    "id": "multitool_search_then_fetch",
+    "tier": 6,
+    "requires": ["web_search", "url_fetch", "tavily_key"],
+    "category": "exploration",
+    "description": "Two-step composition: web_search returns sources → agent picks one → fetch_url reads it",
+    "message": "Find one recent article about Pendle Finance using web_search, then use fetch_url on the most relevant result URL to read it. Tell me the article's title and a 2-sentence summary.",
+    "expect": {
+      "stopped": "final",
+      "reply_contains_any": ["Pendle"],
+      "reply_not_contains": ["I cannot", "I can't search", "TAVILY_API_KEYS not set"],
+      "min_turns": 2,
+      "spend_max": 0.025
+    }
+  },
+
+  {
+    "id": "multitool_evm_decode_with_search",
+    "tier": 6,
+    "requires": ["evm", "web_search", "tavily_key"],
+    "category": "exploration",
+    "description": "Three-step: get contract bytecode via eth_getCode → search to identify the contract → return identity",
+    "message": "Use eth_getCode to fetch the bytecode at 0xC36442b4a4522E871399CD717aBDD847Ab11FE88 on ethereum. Then use web_search to find what protocol this address belongs to. Tell me the protocol name and what this contract does.",
+    "expect": {
+      "stopped": "final",
+      "reply_contains_any": ["Uniswap", "NonfungiblePositionManager", "v3", "position"],
+      "reply_not_contains": ["I cannot", "I do not have access"],
+      "min_turns": 2,
+      "spend_max": 0.025
+    }
+  },
+
+  {
+    "id": "multitool_memory_then_search",
+    "tier": 6,
+    "requires": ["web_search", "tavily_key"],
+    "category": "exploration",
+    "description": "Memory recall → contextual search: agent must use a stored preference to shape the search",
+    "message": "First save_memory of type 'preference' with text 'I am only interested in Layer-2 networks, especially Base and Arbitrum'. Then use web_search to find the latest news about scaling solutions, applying my preference. Summarize what you found in 3 bullet points.",
+    "expect": {
+      "stopped": "final",
+      "reply_contains_any": ["Base", "Arbitrum", "L2", "Layer", "rollup"],
+      "reply_not_contains": ["I cannot save", "I do not have"],
+      "min_turns": 2,
+      "spend_max": 0.025
+    }
+  },
+
+  {
+    "id": "multitool_tweet_verify",
+    "tier": 7,
+    "requires": ["url_fetch", "web_search", "tavily_key"],
+    "category": "exploration_advanced",
+    "description": "Four-step: fetch tweet → extract claim → search to verify → report verdict",
+    "message": "Use fetch_url on https://twitter.com/jack/status/20 to read what the tweet says. Then use web_search to find context about who the author is and when this tweet was posted. Tell me: 1) what the tweet says verbatim, 2) who the author is, 3) why this tweet is historically notable.",
+    "expect": {
+      "stopped": "final",
+      "reply_contains_any": ["just setting up", "twttr", "jack", "Twitter"],
+      "reply_contains": ["historic"],
+      "reply_not_contains": ["I cannot", "no browser"],
+      "min_turns": 2,
+      "spend_max": 0.04
+    }
+  },
+
+  {
+    "id": "multitool_deep_dive_token",
+    "tier": 7,
+    "requires": ["on_chain_ta", "web_search", "tavily_key", "url_fetch"],
+    "category": "exploration_advanced",
+    "description": "Five-step deep-dive: on-chain data → search for context → optionally fetch source → synthesize verdict",
+    "message": "Do a deep dive on this token: 0x6982508145454ce325ddbe47a25d4ec3d2311933 on ethereum. Use combined_token_analysis to get the on-chain data, then use web_search to find recent sentiment/news about it. Tell me: 1) the token name and current price, 2) liquidity health (is it tradeable?), 3) the top 1 risk you'd flag based on news. Be concise — 4 bullet points max.",
+    "expect": {
+      "stopped": "final",
+      "reply_contains_any": ["Pepe", "PEPE", "meme"],
+      "reply_not_contains": ["I do not have access", "I cannot fetch"],
+      "min_turns": 2,
+      "spend_max": 0.04
+    }
   }
 ]

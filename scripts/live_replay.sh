@@ -210,6 +210,12 @@ if "spend_max" in expect:
     if spend > expect["spend_max"]:
         fails.append(f"spend ${spend:.4f} > cap ${expect['spend_max']:.4f}")
 
+# min_turns — exploration cases must actually call multiple tools
+if "min_turns" in expect:
+    turns = int(env.get("turns") or 0)
+    if turns < expect["min_turns"]:
+        fails.append(f"turns={turns} < min {expect['min_turns']} (agent skipped tool composition)")
+
 # rc check (don't fail just on rc — `stopped != final` already implies non-zero)
 status = "PASS" if not fails else "FAIL"
 print(status + "\t" + "; ".join(fails))
