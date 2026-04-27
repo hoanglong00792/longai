@@ -90,6 +90,54 @@
     }
   },
   {
+    "id": "web_search_pendle",
+    "tier": 3,
+    "requires": ["web_search", "tavily_key"],
+    "message": "Use the web_search tool to find what Pendle Finance is. Give me a one-line answer based on the results.",
+    "expect": {
+      "stopped": "final",
+      "reply_contains_any": ["Pendle", "yield", "DeFi", "tokeniz"],
+      "reply_not_contains": ["I cannot search", "I can't search", "I do not have access", "TAVILY_API_KEYS not set"],
+      "spend_max": 0.025
+    }
+  },
+  {
+    "id": "web_search_finance_topic",
+    "tier": 3,
+    "requires": ["web_search", "tavily_key"],
+    "message": "Use web_search with topic='finance' to find the current price of Bitcoin.",
+    "expect": {
+      "stopped": "final",
+      "reply_contains_any": ["BTC", "Bitcoin", "$", "USD", "price"],
+      "reply_not_contains": ["TAVILY_API_KEYS not set"],
+      "spend_max": 0.025
+    }
+  },
+  {
+    "id": "url_fetch_twitter_jack",
+    "tier": 3,
+    "requires": ["url_fetch"],
+    "message": "Use fetch_url on https://twitter.com/jack/status/20 and tell me exactly what the tweet says.",
+    "expect": {
+      "stopped": "final",
+      "reply_contains_any": ["just setting up", "twttr", "jack"],
+      "reply_not_contains": ["I cannot", "no browser", "login", "sign in"],
+      "spend_max": 0.025
+    }
+  },
+  {
+    "id": "url_fetch_generic_article",
+    "tier": 3,
+    "requires": ["url_fetch"],
+    "message": "Use fetch_url on https://example.com and tell me the title of the page.",
+    "expect": {
+      "stopped": "final",
+      "reply_contains_any": ["Example Domain", "example"],
+      "reply_not_contains": ["I cannot fetch", "TAVILY"],
+      "spend_max": 0.015
+    }
+  },
+  {
     "id": "sanitizer_redact_wallet",
     "tier": 4,
     "message": "Please reply with this exact text: 'Wallet: 0x6131B5fae19EA4f9D964eAc0408E4408b66337b5 - send funds here'",
