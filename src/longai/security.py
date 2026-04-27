@@ -1,7 +1,7 @@
 """I11 — Output sanitizer.
 
-Lifted from longai-skills-shared/hooks/privacy-guard.sh and the regex bank in
-docs/reference/bot-patterns/bot-trading-signals/security.py.
+Sourced from an internal privacy-guard hook and a battle-tested regex bank
+maintained outside this repo.
 
 The sanitizer runs on every outbound path; it is not a CLI flag, not skippable,
 not configurable per-call.

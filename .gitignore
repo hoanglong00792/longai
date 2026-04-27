@@ -28,4 +28,10 @@ test-results/
 /.playwright-mcp
 myenv/
 
-# Build artifacts (uv.lock kept tracked for reproducible installs)
+# PRIVACY — never track these (they reference unpublished sibling projects):
+#   - docs/  contains research + reference material from internal repos
+#   - plan.md is an obsolete project plan with internal-repo references
+#   - *.local.* files (per-machine config / private profile)
+docs/
+plan.md
+*.local.*

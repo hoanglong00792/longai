@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # scripts/live_replay.sh — run a batch of prompts through `longai run`
-# using a REAL OpenRouter key. Modeled on dr-agent/scripts/live_replay.sh.
+# using a REAL OpenRouter key. Outputs per-case trace dirs + a summary TSV.
 #
 # Usage:
 #   export OPENROUTER_API_KEY=sk-or-v1-...

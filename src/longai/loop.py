@@ -1,6 +1,6 @@
 """Agent loop — single-turn or multi-turn until final|max_turns|stuck|budget|error.
 
-Patterns lifted from dr-agent/internal/agent/loop.go:
+Patterns:
 - error-as-content: tool errors become {"error":"..."} content fed back
 - stuck-loop trap: 3 identical (name, args) SHA-256 hashes → bail
 - stateless per-call: every run rebuilds messages, hashes, tokens

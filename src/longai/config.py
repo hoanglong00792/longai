@@ -1,7 +1,7 @@
 """Config loader: tomllib + env. Boot-panic on missing required keys.
 
-Lifted from dr-agent/internal/llm/openrouter.go:60-73 — panic at boot, not on
-first message.
+Discipline: panic at boot, not on first message — surface bad config before
+the bot is in production polling mode.
 """
 from __future__ import annotations
 

@@ -2,7 +2,8 @@
 
 I4 — enforces budget caps (global/per-user/per-call/wall-clock) at every call.
 
-Patterns lifted from dr-agent/internal/llm/openrouter.go and internal/agent/loop.go.
+Patterns: stuck-loop trap, error-as-content, fallback chain, cooldown,
+retryability classifier, conservative pricing fallback.
 """
 from __future__ import annotations
 
@@ -43,7 +44,7 @@ def _is_free_slug(model: str) -> bool:
     """Free OpenRouter slugs: ending in ':free' OR a known free exception."""
     return model.endswith(":free") or model in _FREE_EXCEPTIONS
 
-COOLDOWN_S = 300  # 5 minutes per dr-agent pattern
+COOLDOWN_S = 300  # 5 minutes — bench-press a model after a retryable failure
 
 
 class Unauthorized(Exception):
