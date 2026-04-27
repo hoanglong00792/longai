@@ -1,6 +1,5 @@
 """LongAI strategy MCP wrapper — multi-timeframe TA.
 
-Wraps the script behavior from longai-skills-personal/skills/longai-strategy/.
 Tool: analyze_ticker(symbol, timeframes=[4h,1d,1w]).
 
 Requires optional [longai_strategy] extra: yfinance, pandas, numpy.

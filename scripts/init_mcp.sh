@@ -13,8 +13,11 @@
 #   1. Verifies REQUIRED prerequisites (npx for Playwright, .venv/bin/python)
 #   2. Resolves PLACEHOLDER_VENV_PYTHON  → ABS path to .venv/bin/python
 #   3. Resolves PLACEHOLDER_DB_PATH      → ABS path to ~/.longai/state.db
-#   4. Resolves PLACEHOLDER_SKILLS_*     → ABS paths to sibling skill repos
-#                                          (entries dropped if a repo doesn't exist)
+#   4. Resolves PLACEHOLDER_SKILLS_*     → paths from env vars or config.toml.
+#                                          Resolution order per scope:
+#                                            a. env LONGAI_SKILLS_{SHARED,PERSONAL,WORK}
+#                                            b. ~/.longai/config.toml [skills].{shared,personal,work}
+#                                            c. unset → that scope is dropped
 #   5. Strips _comment fields (clean JSON)
 #   6. Writes to ~/.longai/mcp.json (or --dest)
 #
@@ -85,16 +88,61 @@ if [ "${ERRORS}" -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Step 2 — discover skill repo paths (siblings of repo root)
+# Step 2 — resolve skill repo paths (env > config.toml > unset)
 # ---------------------------------------------------------------------------
 
-SKILLS_SHARED="$(cd "${REPO_ROOT}/.." && pwd)/longai-skills-shared"
-SKILLS_PERSONAL="$(cd "${REPO_ROOT}/.." && pwd)/longai-skills-personal"
-SKILLS_WORK="$(cd "${REPO_ROOT}/.." && pwd)/longai-skills-work"
+CONFIG_TOML="${HOME_DIR}/.longai/config.toml"
 
-[ -d "${SKILLS_SHARED}" ]   && echo "✅ skills (shared):   ${SKILLS_SHARED}"   || { echo "ℹ️  skills (shared): not found at ${SKILLS_SHARED}"; SKILLS_SHARED=""; }
-[ -d "${SKILLS_PERSONAL}" ] && echo "✅ skills (personal): ${SKILLS_PERSONAL}" || { echo "ℹ️  skills (personal): not found at ${SKILLS_PERSONAL}"; SKILLS_PERSONAL=""; }
-[ -d "${SKILLS_WORK}" ]     && echo "✅ skills (work):     ${SKILLS_WORK}"     || { echo "ℹ️  skills (work): not found at ${SKILLS_WORK}"; SKILLS_WORK=""; }
+resolve_skill_path() {
+    # $1 = env var name (e.g. LONGAI_SKILLS_SHARED)
+    # $2 = config.toml [skills] key (e.g. shared)
+    local env_var="$1" config_key="$2"
+    local v="${!env_var:-}"
+    if [ -n "$v" ]; then
+        eval echo "$v"   # expand ~
+        return
+    fi
+    if [ -f "${CONFIG_TOML}" ]; then
+        "${VENV_PY}" - "${CONFIG_TOML}" "${config_key}" <<'PY'
+import os, sys, tomllib
+path, key = sys.argv[1], sys.argv[2]
+try:
+    with open(path, "rb") as f:
+        cfg = tomllib.load(f)
+    v = cfg.get("skills", {}).get(key, "")
+    if v:
+        print(os.path.expanduser(str(v)))
+except Exception:
+    pass
+PY
+    fi
+}
+
+report_skill_path() {
+    # $1 = scope label (e.g. "shared")
+    # $2 = resolved path (may be empty)
+    local label="$1" path="$2"
+    if [ -z "${path}" ]; then
+        echo "ℹ️  skills (${label}): not configured (skipping)"
+    elif [ -d "${path}" ]; then
+        echo "✅ skills (${label}):   ${path}"
+    else
+        echo "ℹ️  skills (${label}) configured but not found: ${path}"
+    fi
+}
+
+SKILLS_SHARED="$(resolve_skill_path LONGAI_SKILLS_SHARED shared)"
+SKILLS_PERSONAL="$(resolve_skill_path LONGAI_SKILLS_PERSONAL personal)"
+SKILLS_WORK="$(resolve_skill_path LONGAI_SKILLS_WORK work)"
+
+report_skill_path shared "${SKILLS_SHARED}"
+report_skill_path personal "${SKILLS_PERSONAL}"
+report_skill_path work "${SKILLS_WORK}"
+
+# Drop scopes whose path doesn't exist (downstream JSON substitution treats empty as "drop")
+[ -d "${SKILLS_SHARED}" ]   || SKILLS_SHARED=""
+[ -d "${SKILLS_PERSONAL}" ] || SKILLS_PERSONAL=""
+[ -d "${SKILLS_WORK}" ]     || SKILLS_WORK=""
 
 DB_PATH="${HOME_DIR}/.longai/state.db"
 

@@ -1,10 +1,13 @@
 # src/longai_mcps/skill_loader/server.py
-"""I12 — read-only skill loader. Reads sibling repos.
+"""I12 — read-only skill loader. Reads from external skill repos.
+
+Each scope (shared / personal / work) maps to a directory containing skill
+markdown files. Scopes are user-defined and configured via env vars:
 
 Env:
-  LONGAI_SKILLS_SHARED   (path to longai-skills-shared)
-  LONGAI_SKILLS_PERSONAL (path to longai-skills-personal)
-  LONGAI_SKILLS_WORK     (path to longai-skills-work)
+  LONGAI_SKILLS_SHARED   (path to "shared" skill repo, optional)
+  LONGAI_SKILLS_PERSONAL (path to "personal" skill repo, optional)
+  LONGAI_SKILLS_WORK     (path to "work" skill repo, optional)
 """
 from __future__ import annotations
 

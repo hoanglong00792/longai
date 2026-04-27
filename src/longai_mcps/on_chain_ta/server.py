@@ -1,6 +1,5 @@
 """On-chain TA MCP wrapper.
 
-Wraps the script behavior from longai-skills-shared/skills/on-chain-ta/.
 Tools:
   - coingecko_token_info(chain, address)
   - dexscreener_pairs(chain, address)

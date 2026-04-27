@@ -71,7 +71,7 @@ bash scripts/init_mcp.sh
 This:
 1. Verifies `npx` is installed (Playwright requirement)
 2. Verifies `.venv/bin/python` exists
-3. Auto-detects sibling skill repos (`longai-skills-{shared,personal,work}`)
+3. Reads skill-repo paths from `LONGAI_SKILLS_{SHARED,PERSONAL,WORK}` env vars (each optional — entries are dropped if the path is unset or doesn't exist)
 4. Writes `~/.longai/mcp.json` with absolute paths for THIS machine
 
 If any prerequisite fails, the script aborts with a clear message.

@@ -65,10 +65,13 @@ db_path = "~/.longai/state.db"
 mcp_config_path = "~/.longai/mcp.json"
 
 [skills]
-# Locations of sibling skill repos (I12, read-only)
-shared = "~/Documents/GitHub/longai-skills-shared"
-personal = "~/Documents/GitHub/longai-skills-personal"
-work = "~/Documents/GitHub/longai-skills-work"
+# Locations of external skill repos (I12, read-only). Three scopes — set the
+# paths to wherever you keep skill markdown files, or leave empty/absent to
+# disable a scope. The script `init_mcp.sh` also honours the env vars
+# LONGAI_SKILLS_{SHARED,PERSONAL,WORK} which take priority over these entries.
+shared = ""
+personal = ""
+work = ""
 
 [logging]
 level = "INFO"

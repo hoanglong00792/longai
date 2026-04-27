@@ -165,7 +165,7 @@ The sanitizer enforces:
 | 64-char hex strings (potential private keys) | Replace with `[PRIVATE KEY REDACTED]` |
 | 12-or-24-word BIP-39 mnemonic phrases | Replace with `[SEED PHRASE REDACTED]` |
 | RPC URLs containing API keys (Infura/Alchemy/QuickNode) | Mask the key portion |
-| Specific portfolio %, allocations, perf numbers from private-profile | Suppressed (per `longai-skills-shared/hooks/privacy-guard.sh`) |
+| Specific portfolio %, allocations, perf numbers from private-profile | Suppressed (per an external privacy-guard hook in the user's skill repos) |
 
 Sourced from an internal privacy-guard hook and a battle-tested regex bank
 maintained outside this repo. Unit-tested with adversarial fixtures in
@@ -174,7 +174,7 @@ CLI-flag, not skippable, not configurable per-call.**
 
 ## I12 — Skills are read-only references, not silently executed
 
-The bot reuses skills from `longai-skills-{shared,personal,work}` repos via:
+The bot reuses skills from external user-configured skill repos (typically split into "shared", "personal", "work" scopes) via:
 
 1. The `skill_loader` MCP tool — `list_skills(query)` returns names+descriptions;
    `load_skill(name)` returns the SKILL.md body (capped 8 KB).
@@ -182,8 +182,8 @@ The bot reuses skills from `longai-skills-{shared,personal,work}` repos via:
    `on_chain_ta`, `longai_strategy`).
 
 The bot does **not** execute SKILL.md bodies as code, does **not** fork Claude
-Code's hook/skill execution model, and does **not** modify any file under
-`longai-skills-*`. Skill repos are **read-only sources of truth.**
+Code's hook/skill execution model, and does **not** modify any file in the
+configured skill repos. Skill repos are **read-only sources of truth.**
 
 If a skill has executable code that the bot needs (Category A in
 `docs/superpowers/specs/2026-04-27-longai-design.md`), wrap it as its own MCP

@@ -1,7 +1,7 @@
 # src/longai/bot.py
 """Telegram bot surface (polling, single-process).
 
-Pattern lifted from longai-skills-work/longai-work-assistant/bot.py:
+Conventions:
 - Auth decorator that compares update.effective_user.id (chat_id-equivalent)
 - Polling mode for v1 (no public IP needed)
 
