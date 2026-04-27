@@ -275,5 +275,49 @@
       "tier": "L",
       "spend_max": 0.04
     }
+  },
+
+  {
+    "id": "fast_help",
+    "tier": 1,
+    "category": "fast_commands",
+    "description": "/help bypasses the agent loop; zero turns, zero spend.",
+    "message": "/help",
+    "expect": {
+      "stopped": "final",
+      "tier": "fast",
+      "spend_max": 0.0001,
+      "reply_contains_any": ["/price", "/ta"]
+    }
+  },
+
+  {
+    "id": "fast_price_eth",
+    "tier": 2,
+    "requires": ["on_chain_ta"],
+    "category": "fast_commands",
+    "description": "/price ETH calls coingecko_token_info directly; zero LLM turns.",
+    "message": "/price ETH",
+    "expect": {
+      "stopped": "final",
+      "tier": "fast",
+      "spend_max": 0.0001,
+      "reply_contains": ["ETH"],
+      "reply_contains_any": ["$"]
+    }
+  },
+
+  {
+    "id": "enriched_eth_price_query",
+    "tier": 2,
+    "requires": ["on_chain_ta"],
+    "category": "enrichment",
+    "description": "Plain English price query should be enriched pre-LLM, so the loop finishes in few turns instead of looping through tool calls.",
+    "message": "what's ETH trading at right now",
+    "expect": {
+      "stopped": "final",
+      "reply_contains_any": ["$", "USD"],
+      "spend_max": 0.01
+    }
   }
 ]

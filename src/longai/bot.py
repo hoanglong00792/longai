@@ -20,6 +20,7 @@ from telegram.ext import (
     MessageHandler, filters,
 )
 
+from longai import enrichment, fast_commands, router
 from longai.cli import BASE_PROMPT, SAFETY_BLOCK, _build_stack, _skill_catalog
 from longai.config import load
 from longai.security import sanitize_outbound
@@ -70,6 +71,17 @@ async def _run_bot_async(args: argparse.Namespace) -> None:
             return
         user = msg.text
         started_ts = int(time.time())
+
+        # NOTE: fast slash commands (/price, /ta, /caps) are wired as separate
+        # Telegram CommandHandlers below — they never reach on_message because
+        # the MessageHandler filter excludes commands. Only free-form text
+        # falls through here, where it gets pre-LLM enrichment + loop.run.
+
+        # Pre-LLM enrichment for symbol-referencing messages
+        hints = router.classify(user)
+        ctx_block = await enrichment.enrich(hints, mcp)
+        enriched_user = enrichment.attach(user, ctx_block)
+
         history = p.load_history(chat_id)
         catalog = await _skill_catalog(mcp)
         sysprompt = mem.build_system_prompt(
@@ -78,7 +90,7 @@ async def _run_bot_async(args: argparse.Namespace) -> None:
         )
         res = await loop.run(
             chat_id=chat_id, system_prompt=sysprompt,
-            user_message=user, history=history,
+            user_message=enriched_user, history=history,
         )
         reply = _sanitize_reply(res.text)
         await msg.reply_text(reply)
@@ -90,20 +102,43 @@ async def _run_bot_async(args: argparse.Namespace) -> None:
             error=res.error,
         )
 
-    @_auth(cfg.allowed_chat_ids)
-    async def on_help(update, context):
-        await update.message.reply_text(
-            "longai — send any message and I'll respond.\n"
-            "/help — this message"
-        )
+    def _make_fast_handler(handler_fn):
+        """Wrap a fast_commands handler as a Telegram CommandHandler.
+
+        Logs to persistence the same way on_message does, so /price use shows
+        up in message history and traces.
+        """
+        @_auth(cfg.allowed_chat_ids)
+        async def telegram_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            import time
+            import uuid
+            chat_id = update.effective_chat.id
+            arg = " ".join(context.args) if context.args else ""
+            started_ts = int(time.time())
+            fr = await handler_fn(arg, mcp, p)
+            await update.message.reply_text(_sanitize_reply(fr.text))
+            cmd_name = update.message.text.split()[0] if update.message and update.message.text else ""
+            p.append_message(chat_id, "user", update.message.text or cmd_name, tokens=0)
+            p.append_message(chat_id, "assistant", fr.text, tokens=0)
+            p.log_trace(
+                run_id=str(uuid.uuid4()), chat_id=chat_id, started_ts=started_ts,
+                stopped="final", spend_usd=0.0, turns=0, error=fr.error,
+            )
+        return telegram_handler
 
     app = (
         ApplicationBuilder()
         .token(cfg.telegram_bot_token)
         .build()
     )
-    app.add_handler(CommandHandler(["start", "help"], on_help))
+    # Free-form text → on_message (pre-LLM enrichment + agent loop)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
+    # Slash commands → fast handlers (no LLM, no spend)
+    app.add_handler(CommandHandler("price", _make_fast_handler(fast_commands.cmd_price)))
+    app.add_handler(CommandHandler("ta", _make_fast_handler(fast_commands.cmd_ta)))
+    app.add_handler(CommandHandler("caps", _make_fast_handler(fast_commands.cmd_caps)))
+    # /start and /help share the same help text (CLI parity via fast_commands)
+    app.add_handler(CommandHandler(["start", "help"], _make_fast_handler(fast_commands.cmd_help)))
 
     logger.info("longai bot starting; whitelist=%s", cfg.allowed_chat_ids)
     try:

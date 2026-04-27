@@ -7,6 +7,7 @@ import asyncio
 import json
 import sys
 
+from longai import enrichment, fast_commands, router
 from longai.budget_guard import BudgetGuard
 from longai.config import ConfigError, load
 from longai.envelope import format_error, format_result
@@ -188,6 +189,34 @@ async def _run_async(args: argparse.Namespace) -> int:
     tracer = Tracer(effective_trace_dir)
 
     try:
+        # ─ Fast path: known slash commands skip the agent loop entirely ─
+        if fast_commands.is_fast_command(prompt):
+            tracer.input(prompt)
+            fr = await fast_commands.dispatch(prompt, mcp=mcp, persistence=p)
+            assert fr is not None  # is_fast_command was True
+            text = sanitize_outbound(fr.text)
+            envelope = {
+                "result": text,
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+                "model": "", "tier": "fast", "turns": 0, "stopped": "final",
+                "spend_usd": 0.0, "trace_id": tracer.run_id,
+                "error": fr.error,
+            }
+            tracer.output(envelope)
+            print(json.dumps(envelope))
+            p.append_message(args.user_id, "user", prompt, tokens=0)
+            p.append_message(args.user_id, "assistant", text, tokens=0)
+            p.log_trace(
+                run_id=tracer.run_id, chat_id=args.user_id, started_ts=started_ts,
+                stopped="final", spend_usd=0.0, turns=0, error=fr.error,
+            )
+            return 0 if fr.error is None else 1
+
+        # ─ Pre-LLM enrichment: fetch market data upfront if a symbol is referenced ─
+        hints = router.classify(prompt)
+        ctx_block = await enrichment.enrich(hints, mcp)
+        enriched_prompt = enrichment.attach(prompt, ctx_block)
+
         history = p.load_history(args.user_id, max_msgs=20, max_tokens=8000)
         catalog = await _skill_catalog(mcp)
         sysprompt = mem.build_system_prompt(
@@ -195,10 +224,10 @@ async def _run_async(args: argparse.Namespace) -> int:
             safety_block=SAFETY_BLOCK, skill_catalog=catalog,
         )
         tracer.system(sysprompt)
-        tracer.input(prompt)
+        tracer.input(enriched_prompt)
         result = await loop.run(
             chat_id=args.user_id, system_prompt=sysprompt,
-            user_message=prompt, history=history,
+            user_message=enriched_prompt, history=history,
         )
         envelope = format_result(result, model=result.model_used, trace_id=tracer.run_id)
         envelope["result"] = sanitize_outbound(envelope["result"])  # I11
@@ -253,6 +282,26 @@ async def _chat_async(args: argparse.Namespace) -> int:
             if not user:
                 continue
             started_ts = int(time.time())
+
+            # Fast path: bypass loop for known slash commands
+            if fast_commands.is_fast_command(user):
+                fr = await fast_commands.dispatch(user, mcp=mcp, persistence=p)
+                assert fr is not None
+                _print_to_user(fr.text)
+                p.append_message(args.user_id, "user", user, tokens=0)
+                p.append_message(args.user_id, "assistant", fr.text, tokens=0)
+                p.log_trace(
+                    run_id=str(uuid.uuid4()), chat_id=args.user_id,
+                    started_ts=started_ts, stopped="final", spend_usd=0.0,
+                    turns=0, error=fr.error,
+                )
+                continue
+
+            # Pre-LLM enrichment for symbol-referencing messages
+            hints = router.classify(user)
+            ctx_block = await enrichment.enrich(hints, mcp)
+            enriched_user = enrichment.attach(user, ctx_block)
+
             history = p.load_history(args.user_id)
             catalog = await _skill_catalog(mcp)
             sysprompt = mem.build_system_prompt(
@@ -261,7 +310,7 @@ async def _chat_async(args: argparse.Namespace) -> int:
             )
             res = await loop.run(
                 chat_id=args.user_id, system_prompt=sysprompt,
-                user_message=user, history=history,
+                user_message=enriched_user, history=history,
             )
             _print_to_user(res.text)
             p.append_message(args.user_id, "user", user, tokens=res.prompt_tokens)
