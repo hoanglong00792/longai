@@ -157,9 +157,22 @@ bash scripts/init_mcp.sh --force             # refresh ~/.longai/mcp.json
 
 ## Troubleshooting
 
-### "incompatible architecture (have 'arm64', need 'x86_64')"
-Your `.venv/bin/python` is loading under x86_64 but the wheels are arm64.
-Run `bash scripts/setup_venv.sh` (no flags — it wipes and recreates).
+### "incompatible architecture (have 'arm64', need 'x86_64')" (or vice-versa)
+Your `.venv/bin/python` is loading under one arch but the wheels are the other.
+This usually fires after a `uv run longai ...` invocation in a shell that
+defaults to x86_64 (e.g., rtk wrapper) — uv re-syncs the venv with x86_64
+wheels, then arm64 Python can't load them.
+
+**Permanent fix:** use the `./longai` wrapper instead of `uv run longai`.
+The wrapper forces `arch -arm64` and calls `.venv/bin/python -m longai`
+directly — no uv re-sync, no arch flipping. Add this to your `~/.zshrc`:
+
+```bash
+alias longai='/Users/<you>/Documents/GitHub/longai/longai'
+```
+
+**One-time recovery:** `bash scripts/setup_venv.sh` wipes and recreates
+the venv with the correct arch.
 
 ### "playwright is not enabled" / model says "I have no browser tool"
 Your `~/.longai/mcp.json` doesn't have Playwright. Run `bash scripts/init_mcp.sh --force`.

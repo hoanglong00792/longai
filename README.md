@@ -127,18 +127,32 @@ different env vars.
 
 ## Daily commands
 
+> **macOS users: use the `./longai` wrapper, NOT `uv run longai`.**
+> The wrapper forces arm64 and skips `uv run`'s venv re-sync (which silently
+> swaps arm64 wheels for x86_64 ones if your shell defaults to x86_64 — e.g.
+> via rtk). Without the wrapper you'll get `incompatible architecture`
+> ImportErrors after a `uv run`. Add to your shell rc:
+>
+> ```bash
+> alias longai='/Users/<you>/Documents/GitHub/longai/longai'
+> ```
+
 ```bash
-longai run "<prompt>"        # single-shot, prints JSON envelope
-longai chat                  # interactive REPL (no Telegram)
-longai bot                   # Telegram polling
-longai test                  # golden prompts vs llmstub (cost = $0)
-longai test --live           # golden prompts vs real OpenRouter (~$0.05)
-longai dryrun                # config validation only, no API calls
-longai refresh               # force-refresh the free models cache
-longai refresh --show        # print current cache without refreshing
-longai learn                 # propose memory candidates from history (I7)
-longai learn --apply <path>  # commit reviewed candidates to memory store
+./longai run "<prompt>"      # single-shot, prints JSON envelope
+./longai chat                # interactive REPL (no Telegram)
+./longai bot                 # Telegram polling
+./longai test                # golden prompts vs llmstub (cost = $0)
+./longai test --live         # golden prompts vs real OpenRouter (~$0.05)
+./longai dryrun              # config validation only, no API calls
+./longai refresh             # force-refresh the free models cache
+./longai refresh --show      # print current cache without refreshing
+./longai learn               # propose memory candidates from history (I7)
+./longai learn --apply <p>   # commit reviewed candidates to memory store
 ```
+
+If you still want `uv run` (e.g., on a non-Mac or x86_64 Linux): `arch -arm64
+uv run longai ...` works on Apple Silicon, or just `uv run longai ...` on
+non-arm64 systems. The wrapper is mac-arm64 specific protection.
 
 ---
 

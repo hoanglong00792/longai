@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# longai — wrapper that bypasses `uv run` arch-flipping issues on Apple Silicon.
+#
+# Why: `uv run` re-syncs the venv under whatever arch it's invoked from. On
+# Macs with rtk/shell wrappers that default to x86_64, `uv run longai ...`
+# installs x86_64 wheels; subsequent arm64 Python invocations then can't load
+# them ("incompatible architecture" ImportError). This wrapper forces arm64
+# and calls the venv's Python directly — no uv re-sync.
+#
+# Usage:
+#   ./longai run "what's 2+2"
+#   ./longai chat
+#   ./longai bot
+#
+# Recommended: alias longai='/path/to/repo/longai' in your shell rc.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${SCRIPT_DIR}"
+
+ARCH_PREFIX=""
+if [ "$(uname)" = "Darwin" ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
+    ARCH_PREFIX="arch -arm64"
+fi
+
+PYBIN="${REPO_ROOT}/.venv/bin/python"
+if [ ! -x "${PYBIN}" ]; then
+    echo "ERROR: ${PYBIN} not found." >&2
+    echo "       Run: bash scripts/setup_venv.sh" >&2
+    exit 2
+fi
+
+unset VIRTUAL_ENV   # avoid rtk-set 'myenv' or other stale pointers
+
+exec $ARCH_PREFIX "${PYBIN}" -m longai "$@"
