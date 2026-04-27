@@ -25,6 +25,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
+# Force native arch on Apple Silicon — venv's universal Python may pick x86_64
+# when invoked from rtk/shell wrappers, which then fails to load arm64 wheels
+# (universal-binary arch ambiguity). Bypass `uv run` and call the venv's Python
+# directly with `arch -arm64` — both are needed:
+#   - `uv run` may re-fork without inheriting arch
+#   - .venv/bin/python is a universal binary that must be told which slice
+# Detect Apple Silicon at hardware level — `uname -m` lies inside x86_64 subshells
+# (e.g., rtk wrappers default to x86_64 mode). `sysctl -n hw.optional.arm64` returns
+# "1" on Apple Silicon regardless of the current process arch.
+ARCH_PREFIX=""
+if [ "$(uname)" = "Darwin" ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
+    ARCH_PREFIX="arch -arm64"
+fi
+
+# Drop a polluting VIRTUAL_ENV (e.g., a stale myenv from earlier sessions).
+unset VIRTUAL_ENV
+
+# Resolve Python binary
+if [ ! -x ".venv/bin/python" ]; then
+    echo "ERROR: .venv/bin/python not found. Run scripts/setup_venv.sh first." >&2
+    exit 2
+fi
+PYBIN="${REPO_ROOT}/.venv/bin/python"
+
 PROMPTS="tests/e2e/test_prompts.json"
 TIER=0
 MAX_CASES=0  # 0 = unlimited
@@ -111,7 +135,7 @@ while IFS=$'\t' read -r ID CASE_TIER MESSAGE_JSON EXPECT_JSON; do
 
   # Run the case. Capture stdout (envelope JSON) and exit code.
   set +e
-  ENVELOPE="$(uv run longai run --user-id -1 --trace-dir "${CASE_TRACE}" -- "${MESSAGE}" 2>"${CASE_TRACE}/stderr.txt")"
+  ENVELOPE="$($ARCH_PREFIX "${PYBIN}" -m longai run --user-id -1 --trace-dir "${CASE_TRACE}" -- "${MESSAGE}" 2>"${CASE_TRACE}/stderr.txt")"
   RC=$?
   set -e
 
