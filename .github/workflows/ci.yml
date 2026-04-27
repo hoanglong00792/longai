@@ -1,0 +1,17 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install
+        run: |
+          pip install uv
+          uv pip install --system -e ".[dev]"
+      - name: I3 chokepoint check
+        run: bash scripts/check_i3.sh
+      - name: Tests
+        run: pytest -v
