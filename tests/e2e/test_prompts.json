@@ -68,6 +68,18 @@
     }
   },
   {
+    "id": "playwright_etherscan_tx_summary",
+    "tier": 3,
+    "requires": ["playwright"],
+    "message": "use playwright to open https://etherscan.io/tx/0x5798869a235d237ff3d8a97079c68debb22fa8051e92ae25632a92de700557a4 and summarise the tx",
+    "expect": {
+      "stopped": "final",
+      "reply_contains_any": ["Pendle", "USDC", "Router", "PT", "YT", "apxUSD", "apyUSD"],
+      "reply_not_contains": ["I do not have access", "no browser", "cannot browse"],
+      "spend_max": 0.025
+    }
+  },
+  {
     "id": "evm_balance",
     "tier": 3,
     "requires": ["evm"],

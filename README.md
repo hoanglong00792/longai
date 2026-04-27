@@ -1,37 +1,57 @@
 # `longai`
 
 Personal Telegram bot for ≤10 trusted users. Free-models-first agent loop on
-OpenRouter, strict budget caps, MCP toolbelt, local CLI for testing without
-Telegram.
+OpenRouter, strict budget caps, MCP toolbelt (Playwright + EVM + KyberSwap +
+TA + memory + skills), local CLI for testing without Telegram.
 
-> **Status:** v1 in development. See [`INVARIANTS.md`](./INVARIANTS.md) for the
-> non-negotiable rules and [`docs/superpowers/specs/2026-04-27-longai-design.md`](./docs/superpowers/specs/2026-04-27-longai-design.md)
+> **🚨 Setup is non-trivial — read [`SETUP.md`](./SETUP.md) before doing anything.**
+>
+> It documents the **must-have** prerequisites (Node.js + npx for Playwright,
+> arch-consistent venv on Apple Silicon, OpenRouter key, etc.) and the exact
+> 6-step bootstrap. Skipping a step will produce failures that look like bugs
+> but aren't.
+
+> **Status:** v1 working end-to-end. See [`INVARIANTS.md`](./INVARIANTS.md) for the
+> 12 non-negotiable rules and [`docs/superpowers/specs/2026-04-27-longai-design.md`](./docs/superpowers/specs/2026-04-27-longai-design.md)
 > for the design spec.
 
-## Quick start
+## TL;DR setup (full version: [SETUP.md](./SETUP.md))
 
 ```bash
-# 1. Install
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
+# 0. Prereqs: Python ≥3.11, uv, Node.js ≥18 with npx
+brew install node uv  # if missing
 
-# 2. Configure
+# 1. Clone + venv
+git clone <repo-url> longai && cd longai
+bash scripts/setup_venv.sh                       # arch-consistent .venv
+
+# 2. Config + MCP registry
 mkdir -p ~/.longai
-cp config.example.toml ~/.longai/config.toml
-cp mcp.example.json ~/.longai/mcp.json   # ships with Playwright MCP enabled
-# Edit ~/.longai/config.toml — set allowed_chat_ids
-# Set env: OPENROUTER_API_KEY, TELEGRAM_BOT_TOKEN
-# Playwright MCP requires Node.js + npx (one-time): https://nodejs.org
+cp config.example.toml ~/.longai/config.toml     # edit allowed_chat_ids
+bash scripts/init_mcp.sh                         # generates ~/.longai/mcp.json
+                                                  # auto-resolves abs paths
 
-# 3. Test it locally without Telegram
-longai dryrun                       # validate config + spawn MCPs
-longai run "say hello"              # single-shot
-longai chat                         # REPL
-longai test                         # golden prompts vs llmstub
-longai test --live                  # smoke against real OR free chain
+# 3. Env vars
+export OPENROUTER_API_KEY=sk-or-v1-...           # required (panic at boot if missing)
+export TELEGRAM_BOT_TOKEN=123:abc...             # required for `longai bot`
 
-# 4. Run the bot
-longai bot
+# 4. Verify
+uv run longai dryrun                             # config OK
+uv run longai run "what's 2+2"                   # smoke single-shot
+bash scripts/live_replay.sh --tier 1             # 2/2 pass = healthy
+```
+
+## Daily commands
+
+```bash
+longai run "<prompt>"        # single-shot, prints JSON envelope
+longai chat                  # interactive REPL (no Telegram)
+longai bot                   # Telegram polling
+longai test                  # golden prompts vs llmstub (cost = $0)
+longai test --live           # golden prompts vs real OpenRouter
+longai dryrun                # config validation only, no API calls
+longai learn                 # propose memory candidates from history (I7)
+longai learn --apply <path>  # commit reviewed candidates to memory store
 ```
 
 ## Invariants

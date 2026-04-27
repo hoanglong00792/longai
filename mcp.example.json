@@ -1,8 +1,58 @@
 {
+  "_comment": "Default MCP server set for longai. Install via `bash scripts/init_mcp.sh` — it rewrites the absolute paths for your machine. Edit by hand only if you know what you're doing.",
+
   "mcpServers": {
     "playwright": {
+      "_comment": "REQUIRED. Browser automation. Install: Node 18+ with npx.",
       "command": "npx",
       "args": ["-y", "@playwright/mcp@latest"]
+    },
+
+    "longai-calc": {
+      "command": "PLACEHOLDER_VENV_PYTHON",
+      "args": ["-m", "longai_mcps.calc.server"]
+    },
+
+    "longai-evm": {
+      "_comment": "Read-only EVM RPC + Etherscan ABI. Set RPC URLs in env.",
+      "command": "PLACEHOLDER_VENV_PYTHON",
+      "args": ["-m", "longai_mcps.evm.server"],
+      "env": {
+        "LONGAI_RPC_URL_MAINNET": "https://eth.llamarpc.com",
+        "LONGAI_RPC_URL_BASE": "https://base.llamarpc.com",
+        "LONGAI_RPC_URL_ARBITRUM": "https://arbitrum.llamarpc.com"
+      }
+    },
+
+    "longai-memory": {
+      "command": "PLACEHOLDER_VENV_PYTHON",
+      "args": ["-m", "longai_mcps.memory.server"],
+      "env": {
+        "LONGAI_DB_PATH": "PLACEHOLDER_DB_PATH"
+      }
+    },
+
+    "longai-skill-loader": {
+      "_comment": "Reads SKILL.md files from sibling repos. Read-only per I12.",
+      "command": "PLACEHOLDER_VENV_PYTHON",
+      "args": ["-m", "longai_mcps.skill_loader.server"],
+      "env": {
+        "LONGAI_SKILLS_SHARED": "PLACEHOLDER_SKILLS_SHARED",
+        "LONGAI_SKILLS_PERSONAL": "PLACEHOLDER_SKILLS_PERSONAL",
+        "LONGAI_SKILLS_WORK": "PLACEHOLDER_SKILLS_WORK"
+      }
+    },
+
+    "longai-on-chain-ta": {
+      "_comment": "CoinGecko + DexScreener token analysis.",
+      "command": "PLACEHOLDER_VENV_PYTHON",
+      "args": ["-m", "longai_mcps.on_chain_ta.server"]
+    },
+
+    "longai-telegram-out": {
+      "_comment": "Outbound Telegram messages — gated by I8 whitelist. Disabled until you set TELEGRAM_BOT_TOKEN and LONGAI_OUTBOUND_WHITELIST in env.",
+      "command": "PLACEHOLDER_VENV_PYTHON",
+      "args": ["-m", "longai_mcps.telegram_out.server"]
     }
   }
 }
