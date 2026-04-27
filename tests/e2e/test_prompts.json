@@ -25,7 +25,7 @@
     "message": "use the calculate tool to compute (123 + 456) * 7",
     "expect": {
       "stopped": "final",
-      "reply_contains": ["4053"],
+      "reply_contains_any": ["4053", "4,053"],
       "spend_max": 0.01
     }
   },

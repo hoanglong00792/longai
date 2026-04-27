@@ -16,6 +16,8 @@
 #   ./scripts/live_replay.sh --reset-cooldowns            # clear cooldowns table first
 #                                                          (useful after a previous failed
 #                                                           run benched all models)
+#   ./scripts/live_replay.sh --ids calc_tool,evm_balance  # run only these case ids
+#                                                          (combines with --tier)
 #
 # Output:
 #   test-results/live_replay_<UTC-TS>/
@@ -61,6 +63,7 @@ TIER=0
 MAX_CASES=0       # 0 = unlimited
 THROTTLE_S=0      # seconds to sleep between cases (recommended 5+ for full sweeps)
 RESET_COOLDOWNS=0 # if 1, clear the cooldowns table before running
+IDS=""            # comma-separated case ids to run (empty = all matching cases)
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -69,6 +72,7 @@ while [ $# -gt 0 ]; do
     --max-cases) MAX_CASES="$2"; shift 2 ;;
     --throttle) THROTTLE_S="$2"; shift 2 ;;
     --reset-cooldowns) RESET_COOLDOWNS=1; shift ;;
+    --ids) IDS="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
       exit 0
@@ -125,9 +129,10 @@ print(f'  cleared {deleted} cooldown row(s)')
 fi
 
 # Emit per-case TSV: id<TAB>tier<TAB>json(message)<TAB>json(expect)
-python3 - <<'PY' "${PROMPTS}" "${TIER}" "${MAX_CASES}" > "${OUT}/_cases.tsv"
+python3 - <<'PY' "${PROMPTS}" "${TIER}" "${MAX_CASES}" "${IDS}" > "${OUT}/_cases.tsv"
 import json, sys
-path, tier, max_cases = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+path, tier, max_cases, ids_csv = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
+id_filter = {s.strip() for s in ids_csv.split(",") if s.strip()} if ids_csv else None
 with open(path) as f:
     cases = json.load(f)
 out = []
@@ -137,7 +142,15 @@ for c in cases:
     cid = c.get("id"); msg = c.get("message")
     if not cid or not msg:
         continue
+    if id_filter is not None and cid not in id_filter:
+        continue
     out.append(c)
+if id_filter:
+    seen = {c["id"] for c in out}
+    missing = id_filter - seen
+    if missing:
+        print(f"ERROR: --ids contains unknown case(s): {sorted(missing)}", file=sys.stderr)
+        raise SystemExit(2)
 if max_cases > 0:
     out = out[:max_cases]
 for c in out:
@@ -159,9 +172,16 @@ while IFS=$'\t' read -r ID CASE_TIER MESSAGE_JSON EXPECT_JSON; do
   CASE_TRACE="${OUT}/cases/${ID}"
   mkdir -p "${CASE_TRACE}"
 
+  # Tier-6/7 cases chain multiple tools — bump max_turns above the global default
+  # of 5 so weaker free models have headroom to finish the composition.
+  MAX_TURNS_ARGS=()
+  if [ "${CASE_TIER}" -ge 6 ]; then
+      MAX_TURNS_ARGS=(--max-turns 10)
+  fi
+
   # Run the case. Capture stdout (envelope JSON) and exit code.
   set +e
-  ENVELOPE="$($ARCH_PREFIX "${PYBIN}" -m longai run --user-id -1 --trace-dir "${CASE_TRACE}" -- "${MESSAGE}" 2>"${CASE_TRACE}/stderr.txt")"
+  ENVELOPE="$($ARCH_PREFIX "${PYBIN}" -m longai run --user-id -1 --trace-dir "${CASE_TRACE}" "${MAX_TURNS_ARGS[@]}" -- "${MESSAGE}" 2>"${CASE_TRACE}/stderr.txt")"
   RC=$?
   set -e
 

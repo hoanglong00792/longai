@@ -34,7 +34,7 @@ def _print_to_user(text: str) -> None:
     print(sanitize_outbound(text))
 
 
-async def _build_stack(config_path: str, *, require_telegram: bool):
+async def _build_stack(config_path: str, *, require_telegram: bool, max_turns: int | None = None):
     cfg = load(config_path, require_telegram=require_telegram)
     p = Persistence(cfg.db_path); p.init()
     mem = Memory(p)
@@ -66,7 +66,8 @@ async def _build_stack(config_path: str, *, require_telegram: bool):
     }
     mcp = MCPRegistry(cfg.mcp_config_path, allowlist=allowlist)
     await mcp.start()
-    loop = Loop(guard=guard, mcp=mcp, max_turns=cfg.caps.per_call_max_turns)
+    effective_max_turns = max_turns if max_turns is not None else cfg.caps.per_call_max_turns
+    loop = Loop(guard=guard, mcp=mcp, max_turns=effective_max_turns)
     return cfg, p, mem, mcp, loop
 
 
@@ -144,7 +145,10 @@ async def _run_async(args: argparse.Namespace) -> int:
     prompt = " ".join(args.prompt)
     started_ts = int(time.time())
     try:
-        cfg, p, mem, mcp, loop = await _build_stack(args.config, require_telegram=False)
+        cfg, p, mem, mcp, loop = await _build_stack(
+            args.config, require_telegram=False,
+            max_turns=getattr(args, "max_turns", None),
+        )
     except ConfigError as e:
         # No persistence/tracer yet — emit a minimal error envelope and bail.
         tmp = Tracer(args.trace_dir)

@@ -39,6 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(run)
     run.add_argument("prompt", nargs="+")
     run.add_argument("--user-id", type=int, default=-1)
+    run.add_argument("--max-turns", type=int, default=None,
+                     help="Override caps.per_call_max_turns for this run only")
 
     test_p = sub.add_parser("test", help="Run golden prompts (vs llmstub by default)")
     _add_common(test_p)
