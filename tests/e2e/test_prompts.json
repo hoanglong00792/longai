@@ -310,13 +310,27 @@
   {
     "id": "enriched_eth_price_query",
     "tier": 2,
-    "requires": ["on_chain_ta"],
     "category": "enrichment",
-    "description": "Plain English price query should be enriched pre-LLM, so the loop finishes in few turns instead of looping through tool calls.",
+    "description": "Plain English price query — enrichment fetches CoinGecko price upfront so the loop exits in <=2 turns. Was max-turns'ing because enrichment used wrong MCP signature.",
     "message": "what's ETH trading at right now",
     "expect": {
       "stopped": "final",
       "reply_contains_any": ["$", "USD"],
+      "turns_max": 2,
+      "spend_max": 0.01
+    }
+  },
+
+  {
+    "id": "enriched_eth_price_short",
+    "tier": 2,
+    "category": "enrichment",
+    "description": "Short variant of the price query (no 'right now'). Same expectation: enrichment fires, loop exits in <=2 turns.",
+    "message": "what's ETH trading at",
+    "expect": {
+      "stopped": "final",
+      "reply_contains_any": ["$", "USD"],
+      "turns_max": 2,
       "spend_max": 0.01
     }
   }

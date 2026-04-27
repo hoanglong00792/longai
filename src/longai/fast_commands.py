@@ -17,6 +17,7 @@ from typing import Awaitable, Callable
 
 from longai.mcp_client import MCPRegistry, UnknownTool
 from longai.persistence import Persistence
+from longai.prices import COINGECKO_IDS, coingecko_simple_price, format_price_line
 
 logger = logging.getLogger(__name__)
 
@@ -34,46 +35,31 @@ CommandHandler = Callable[[str, MCPRegistry, Persistence], Awaitable[FastResult]
 
 
 async def cmd_price(arg: str, mcp: MCPRegistry, p: Persistence) -> FastResult:
-    """``/price <symbol>`` — direct CoinGecko lookup."""
+    """``/price <symbol>`` — direct CoinGecko simple/price lookup by symbol.
+
+    Uses the id-based endpoint (not the contract-based on_chain_ta MCP), so
+    /price ETH actually works without a contract address.
+    """
     symbol = arg.strip().upper()
     if not symbol:
         return FastResult(text="Usage: /price <symbol>\nExample: /price ETH")
-    try:
-        raw = await mcp.call("coingecko_token_info", {"symbol": symbol})
-    except UnknownTool:
+    if symbol not in COINGECKO_IDS:
         return FastResult(
-            text="Price lookup not available (coingecko_token_info MCP missing).",
-            error="missing_tool",
+            text=(
+                f"Unknown symbol: {symbol}. /price supports the curated set "
+                "(BTC, ETH, SOL, ...). For arbitrary tokens, paste the contract "
+                "address into a normal message and the bot will look it up via "
+                "DexScreener."
+            ),
+            error="unknown_symbol",
         )
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return FastResult(text="Could not parse price data.", error="bad_response")
-    if "error" in data:
+    data = await coingecko_simple_price(symbol)
+    if data is None:
         return FastResult(
-            text=f"Could not get price for {symbol}: {data['error']}",
-            error=data["error"],
+            text=f"Could not fetch price for {symbol} (CoinGecko unreachable or rate-limited).",
+            error="fetch_failed",
         )
-    price = (
-        data.get("current_price_usd")
-        or data.get("current_price")
-        or (data.get("market_data") or {}).get("current_price", {}).get("usd")
-    )
-    change = (
-        data.get("price_change_24h_pct")
-        or data.get("change_pct")
-        or (data.get("market_data") or {}).get("price_change_percentage_24h")
-    )
-    if price is None:
-        return FastResult(text=f"No price data for {symbol}", error="no_data")
-    msg = f"{symbol}: ${float(price):,.2f}"
-    if change is not None:
-        try:
-            sign = "+" if float(change) >= 0 else ""
-            msg += f" ({sign}{float(change):.2f}% 24h)"
-        except (TypeError, ValueError):
-            pass
-    return FastResult(text=msg)
+    return FastResult(text=format_price_line(data))
 
 
 async def cmd_ta(arg: str, mcp: MCPRegistry, p: Persistence) -> FastResult:

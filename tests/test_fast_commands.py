@@ -54,12 +54,21 @@ async def test_dispatch_returns_none_for_non_command(fake_mcp, fake_persistence)
 # ── /price ─────────────────────────────────────────────────────────────
 
 
+@pytest.fixture
+def patch_simple_price(monkeypatch):
+    def _swap(fake):
+        monkeypatch.setattr(
+            "longai.fast_commands.coingecko_simple_price", fake, raising=True,
+        )
+    return _swap
+
+
 @pytest.mark.asyncio
-async def test_price_happy_path(fake_mcp, fake_persistence):
-    fake_mcp.call.return_value = json.dumps({
-        "current_price_usd": 2275.65,
-        "price_change_24h_pct": -1.2,
-    })
+async def test_price_happy_path(fake_mcp, fake_persistence, patch_simple_price):
+    async def fake(symbol):
+        return {"symbol": "ETH", "coin_id": "ethereum",
+                "price_usd": 2275.65, "change_24h_pct": -1.2}
+    patch_simple_price(fake)
     out = await fast_commands.dispatch(
         "/price ETH", mcp=fake_mcp, persistence=fake_persistence,
     )
@@ -67,7 +76,7 @@ async def test_price_happy_path(fake_mcp, fake_persistence):
     assert out.error is None
     assert "ETH: $2,275.65" in out.text
     assert "-1.20% 24h" in out.text
-    fake_mcp.call.assert_awaited_once_with("coingecko_token_info", {"symbol": "ETH"})
+    fake_mcp.call.assert_not_called()  # /price uses HTTP, not MCP
 
 
 @pytest.mark.asyncio
@@ -80,31 +89,37 @@ async def test_price_no_arg_shows_usage(fake_mcp, fake_persistence):
 
 
 @pytest.mark.asyncio
-async def test_price_missing_mcp_returns_error(fake_mcp, fake_persistence):
-    fake_mcp.call.side_effect = UnknownTool("nope")
+async def test_price_unknown_symbol_returns_helpful_error(fake_mcp, fake_persistence):
     out = await fast_commands.dispatch(
-        "/price ETH", mcp=fake_mcp, persistence=fake_persistence,
+        "/price XYZQQQ", mcp=fake_mcp, persistence=fake_persistence,
     )
-    assert out.error == "missing_tool"
-    assert "missing" in out.text.lower()
+    assert out.error == "unknown_symbol"
+    assert "contract" in out.text.lower()  # hint to use a contract address
 
 
 @pytest.mark.asyncio
-async def test_price_tool_error_propagates(fake_mcp, fake_persistence):
-    fake_mcp.call.return_value = json.dumps({"error": "rate limited"})
+async def test_price_fetch_failure_returns_error(fake_mcp, fake_persistence, patch_simple_price):
+    async def fake(symbol):
+        return None
+    patch_simple_price(fake)
     out = await fast_commands.dispatch(
         "/price ETH", mcp=fake_mcp, persistence=fake_persistence,
     )
-    assert out.error == "rate limited"
+    assert out.error == "fetch_failed"
 
 
 @pytest.mark.asyncio
-async def test_price_uppercases_symbol(fake_mcp, fake_persistence):
-    fake_mcp.call.return_value = json.dumps({"current_price_usd": 1.0})
+async def test_price_uppercases_symbol(fake_mcp, fake_persistence, patch_simple_price):
+    captured: list[str] = []
+    async def fake(symbol):
+        captured.append(symbol)
+        return {"symbol": "ETH", "coin_id": "ethereum",
+                "price_usd": 1.0, "change_24h_pct": 0.0}
+    patch_simple_price(fake)
     await fast_commands.dispatch(
         "/price eth", mcp=fake_mcp, persistence=fake_persistence,
     )
-    fake_mcp.call.assert_awaited_once_with("coingecko_token_info", {"symbol": "ETH"})
+    assert captured == ["ETH"]
 
 
 # ── /ta ────────────────────────────────────────────────────────────────

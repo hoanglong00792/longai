@@ -16,6 +16,18 @@ def fake_mcp():
     return m
 
 
+@pytest.fixture
+def patch_simple_price(monkeypatch):
+    """Monkeypatch ``prices.coingecko_simple_price`` and the rebound symbol in
+    ``enrichment``. The fixture yields a callable that swaps in a fake."""
+    def _swap(fake):
+        monkeypatch.setattr(
+            "longai.enrichment.coingecko_simple_price", fake,
+            raising=True,
+        )
+    return _swap
+
+
 @pytest.mark.asyncio
 async def test_no_symbol_returns_none(fake_mcp):
     out = await enrichment.enrich(RouteHints(), fake_mcp)
@@ -24,69 +36,48 @@ async def test_no_symbol_returns_none(fake_mcp):
 
 
 @pytest.mark.asyncio
-async def test_symbol_fetches_and_formats(fake_mcp):
-    fake_mcp.call.return_value = json.dumps({
-        "current_price_usd": 2275.65,
-        "price_change_24h_pct": 2.1,
-    })
+async def test_symbol_fetches_and_formats(fake_mcp, patch_simple_price):
+    async def fake(symbol):
+        return {"symbol": "ETH", "coin_id": "ethereum",
+                "price_usd": 2275.65, "change_24h_pct": 2.1}
+    patch_simple_price(fake)
     out = await enrichment.enrich(RouteHints(symbol="ETH"), fake_mcp)
     assert out is not None
     assert "ETH: $2,275.65" in out
     assert "+2.10% 24h" in out
-    assert "Pre-fetched" in out  # the no-recall directive
-    fake_mcp.call.assert_awaited_once_with("coingecko_token_info", {"symbol": "ETH"})
+    assert "Pre-fetched" in out
 
 
 @pytest.mark.asyncio
-async def test_negative_change_formats_with_minus(fake_mcp):
-    fake_mcp.call.return_value = json.dumps({
-        "current_price_usd": 2200.0,
-        "price_change_24h_pct": -1.5,
-    })
+async def test_negative_change_formats_with_minus(fake_mcp, patch_simple_price):
+    async def fake(symbol):
+        return {"symbol": "ETH", "coin_id": "ethereum",
+                "price_usd": 2200.0, "change_24h_pct": -1.5}
+    patch_simple_price(fake)
     out = await enrichment.enrich(RouteHints(symbol="ETH"), fake_mcp)
     assert "-1.50% 24h" in out
 
 
 @pytest.mark.asyncio
-async def test_missing_tool_returns_none(fake_mcp):
-    fake_mcp.call.side_effect = UnknownTool("not registered")
-    out = await enrichment.enrich(RouteHints(symbol="ETH"), fake_mcp)
+async def test_unknown_symbol_returns_none(fake_mcp, patch_simple_price):
+    """coingecko_simple_price returns None for symbols not in COINGECKO_IDS."""
+    async def fake(symbol):
+        return None
+    patch_simple_price(fake)
+    out = await enrichment.enrich(RouteHints(symbol="NOTASYMBOL"), fake_mcp)
     assert out is None
 
 
 @pytest.mark.asyncio
-async def test_tool_error_response_returns_none(fake_mcp):
-    fake_mcp.call.return_value = json.dumps({"error": "rate limited"})
-    out = await enrichment.enrich(RouteHints(symbol="ETH"), fake_mcp)
-    assert out is None
-
-
-@pytest.mark.asyncio
-async def test_malformed_response_returns_none(fake_mcp):
-    fake_mcp.call.return_value = "not json"
-    out = await enrichment.enrich(RouteHints(symbol="ETH"), fake_mcp)
-    assert out is None
-
-
-@pytest.mark.asyncio
-async def test_no_price_field_returns_none(fake_mcp):
-    fake_mcp.call.return_value = json.dumps({"name": "Ethereum"})  # no price
-    out = await enrichment.enrich(RouteHints(symbol="ETH"), fake_mcp)
-    assert out is None
-
-
-@pytest.mark.asyncio
-async def test_nested_market_data_shape_is_handled(fake_mcp):
-    """CoinGecko sometimes returns price under market_data.current_price.usd."""
-    fake_mcp.call.return_value = json.dumps({
-        "market_data": {
-            "current_price": {"usd": 2275.65},
-            "price_change_percentage_24h": 2.1,
-        },
-    })
+async def test_no_change_field_still_renders(fake_mcp, patch_simple_price):
+    async def fake(symbol):
+        return {"symbol": "ETH", "coin_id": "ethereum",
+                "price_usd": 2275.65, "change_24h_pct": None}
+    patch_simple_price(fake)
     out = await enrichment.enrich(RouteHints(symbol="ETH"), fake_mcp)
     assert out is not None
     assert "ETH: $2,275.65" in out
+    assert "24h" not in out  # change suffix omitted
 
 
 # ── attach() ───────────────────────────────────────────────────────────
@@ -197,11 +188,18 @@ async def test_url_caps_at_three(fake_mcp):
 
 
 @pytest.mark.asyncio
-async def test_multiple_enrichments_run_concurrently(fake_mcp):
-    """Symbol + contract + URL all detected → all fetched in one gather."""
+async def test_multiple_enrichments_run_concurrently(fake_mcp, patch_simple_price):
+    """Symbol + contract + URL all detected → all fetched in one gather.
+
+    Symbol path goes through prices.coingecko_simple_price (HTTP, not MCP).
+    Contract and URL paths go through MCP.
+    """
+    async def fake_price(symbol):
+        return {"symbol": "ETH", "coin_id": "ethereum",
+                "price_usd": 1.0, "change_24h_pct": 0.0}
+    patch_simple_price(fake_price)
+
     async def router_call(name, args):
-        if name == "coingecko_token_info":
-            return json.dumps({"current_price_usd": 1.0})
         if name == "dexscreener_pairs":
             return json.dumps({"pairs": [{"baseToken": {"symbol": "X"}}]})
         if name == "fetch_url":
@@ -220,4 +218,5 @@ async def test_multiple_enrichments_run_concurrently(fake_mcp):
     assert "ETH" in out
     assert "X" in out  # contract symbol
     assert "article body" in out
-    assert fake_mcp.call.await_count == 3
+    # MCP called for contract + URL only — market goes via direct HTTP
+    assert fake_mcp.call.await_count == 2

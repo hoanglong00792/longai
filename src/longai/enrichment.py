@@ -21,6 +21,7 @@ import json
 import logging
 
 from longai.mcp_client import MCPRegistry, UnknownTool
+from longai.prices import coingecko_simple_price, format_price_line
 from longai.router import RouteHints
 
 logger = logging.getLogger(__name__)
@@ -33,43 +34,17 @@ _MAX_URLS = 3
 
 
 async def _fetch_market(symbol: str, mcp: MCPRegistry) -> str | None:
-    """Direct CoinGecko fetch via the on_chain_ta MCP. Returns a one-line
-    formatted block, or None if unavailable / errored.
+    """Symbol-based price lookup via CoinGecko's simple/price endpoint.
+
+    Note: the on_chain_ta MCP's `coingecko_token_info` is contract-based
+    (requires chain+address), so we use the id-based simple/price API
+    directly via the prices module. ``mcp`` parameter kept for signature
+    parity with the other enrichment fetchers.
     """
-    try:
-        raw = await mcp.call("coingecko_token_info", {"symbol": symbol})
-    except UnknownTool:
-        logger.debug("coingecko_token_info MCP not available; skipping enrichment")
+    data = await coingecko_simple_price(symbol)
+    if data is None:
         return None
-    except Exception as exc:
-        logger.debug("coingecko_token_info call failed: %s", exc)
-        return None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    if "error" in data:
-        return None
-    price = (
-        data.get("current_price_usd")
-        or data.get("current_price")
-        or (data.get("market_data") or {}).get("current_price", {}).get("usd")
-    )
-    change = (
-        data.get("price_change_24h_pct")
-        or data.get("change_pct")
-        or (data.get("market_data") or {}).get("price_change_percentage_24h")
-    )
-    if price is None:
-        return None
-    line = f"{symbol}: ${float(price):,.2f}"
-    if change is not None:
-        try:
-            sign = "+" if float(change) >= 0 else ""
-            line += f" ({sign}{float(change):.2f}% 24h)"
-        except (TypeError, ValueError):
-            pass
-    return line
+    return format_price_line(data)
 
 
 async def _fetch_contract(

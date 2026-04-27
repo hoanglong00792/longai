@@ -236,6 +236,12 @@ if "min_turns" in expect:
     if turns < expect["min_turns"]:
         fails.append(f"turns={turns} < min {expect['min_turns']} (agent skipped tool composition)")
 
+# turns_max — enriched / fast-path cases must NOT loop
+if "turns_max" in expect:
+    turns = int(env.get("turns") or 0)
+    if turns > expect["turns_max"]:
+        fails.append(f"turns={turns} > max {expect['turns_max']} (loop ran longer than expected — enrichment may have silently failed)")
+
 # tier — exact match
 if "tier" in expect and env.get("tier") != expect["tier"]:
     fails.append(f"tier={env.get('tier')!r} != expected {expect['tier']!r}")
