@@ -12,7 +12,7 @@ or false-negatives surface.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 # Curated set of high-confidence symbols. Anything here, when it appears
@@ -64,13 +64,36 @@ _COMMON_WORDS: frozenset[str] = frozenset({
 
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*")
 
+# EVM contract / wallet address — 0x + 40 hex. Word boundary so addresses
+# embedded in URLs or longer hex strings don't match.
+_EVM_ADDR_RE = re.compile(r"\b(0x[a-fA-F0-9]{40})\b")
+
+# HTTP(S) URLs. Conservative — accept up to whitespace or a few terminating
+# punctuation chars. Not RFC-perfect; doesn't need to be.
+_URL_RE = re.compile(r"https?://[^\s<>()\[\]\"']+")
+
+# Chain hint detection (mirrors bts router; lighter set for v1).
+_CHAIN_HINTS: dict[str, str] = {
+    "ethereum": "ethereum", "mainnet": "ethereum", "eth": "ethereum",
+    "base": "base",
+    "arbitrum": "arbitrum", "arb": "arbitrum",
+    "optimism": "optimism", "op": "optimism",
+    "polygon": "polygon", "matic": "polygon",
+    "bsc": "bsc", "binance smart chain": "bsc", "bnb chain": "bsc",
+    "avalanche": "avalanche", "avax": "avalanche",
+}
+
 
 @dataclass
 class RouteHints:
     """Hints emitted by ``classify``. Consumed by ``enrichment.enrich``."""
     symbol: str | None = None
     has_finance_hint: bool = False
-    # Future fields (PR E+): contract, chain, search_query, scan, vision_url
+    # PR E lean — contract & URL detection
+    contract: str | None = None
+    chain: str | None = None  # only meaningful when contract is set
+    urls: list[str] = field(default_factory=list)
+    # Future fields: search_query, vision_url, scan
 
 
 def _scan_symbols(text: str) -> str | None:
@@ -97,30 +120,73 @@ def _has_finance_hint(text: str) -> bool:
     return bool(words & _FINANCE_HINTS)
 
 
+def _detect_chain(text: str) -> str | None:
+    """Return the first chain hint in *text*, or None.
+
+    Order matters — multi-word hints checked before single-word so
+    "binance smart chain" wins over "binance" alone.
+    """
+    lower = text.lower()
+    for hint, chain in sorted(_CHAIN_HINTS.items(), key=lambda kv: -len(kv[0])):
+        if hint in lower:
+            return chain
+    return None
+
+
+def _detect_contract(text: str) -> tuple[str | None, str | None]:
+    """Return (address, chain) — chain inferred from text hints, defaults to ethereum."""
+    m = _EVM_ADDR_RE.search(text)
+    if not m:
+        return (None, None)
+    address = m.group(1)
+    chain = _detect_chain(text) or "ethereum"
+    return (address, chain)
+
+
+def _extract_urls(text: str) -> list[str]:
+    """Return URLs in *text* (deduplicated, order-preserving)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in _URL_RE.finditer(text):
+        url = m.group(0).rstrip(".,;:!?")
+        if url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
 def classify(text: str) -> RouteHints:
     """Deterministic intent classification.
 
-    A symbol is reported only when it's high-confidence:
-      - the curated alias map matches (e.g. "ethereum"), OR
-      - the symbol appears AND a finance hint is present (e.g. "BTC price")
+    Detection order (more specific wins):
+      1. EVM contract address  → contract + chain
+      2. URLs                  → urls list
+      3. Symbol                → symbol (alias-match always; ASSET_MAP only with hint or short message)
+      4. Finance hints (bare)  → has_finance_hint flag
 
-    A bare three-letter ticker like "BTC" alone is also returned, but a
-    sentence like "BTC said hi" with no finance hint stays unhinted (the
-    LLM can decide what to do).
+    All applicable hints are returned; multiple enrichments can run in parallel.
     """
     if not text or not text.strip():
         return RouteHints()
+
+    contract, chain = _detect_contract(text)
+    urls = _extract_urls(text)
     symbol = _scan_symbols(text)
     has_hint = _has_finance_hint(text)
-    if symbol is None:
-        return RouteHints(has_finance_hint=has_hint)
-    # If we matched via ALIASES, finance hint not required — "ethereum" is
-    # already a strong signal. If we matched via ASSET_MAP, require a hint
-    # OR the message to be short/symbolic (e.g. just "BTC").
-    matched_via_alias = any(
-        a in text.lower() and ALIASES[a] == symbol for a in ALIASES
+
+    # Symbol gating — same rules as before, but factored out
+    keep_symbol = False
+    if symbol is not None:
+        matched_via_alias = any(
+            a in text.lower() and ALIASES[a] == symbol for a in ALIASES
+        )
+        short_message = len(text.split()) <= 3
+        keep_symbol = matched_via_alias or has_hint or short_message
+
+    return RouteHints(
+        symbol=symbol if keep_symbol else None,
+        has_finance_hint=has_hint,
+        contract=contract,
+        chain=chain,
+        urls=urls,
     )
-    short_message = len(text.split()) <= 3
-    if matched_via_alias or has_hint or short_message:
-        return RouteHints(symbol=symbol, has_finance_hint=has_hint)
-    return RouteHints(has_finance_hint=has_hint)
