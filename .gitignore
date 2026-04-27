@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Local
+.env
+.envrc
+~/.longai/
+.DS_Store
+
+# Tooling
+.venv/
+venv/
+.uv/
+node_modules/
+
+# Editor
+.vscode/
+.idea/
+*.swp

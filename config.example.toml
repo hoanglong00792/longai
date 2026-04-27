@@ -1,0 +1,37 @@
+# longai config — copy to ~/.longai/config.toml and edit
+
+# Whitelist of Telegram chat_ids allowed to talk to the bot (I6: ≤10)
+allowed_chat_ids = []
+
+# Whitelist of chat_ids the agent's `telegram_out` tool can DM (I8)
+# Default: empty list = agent can only reply to the originating chat
+allowed_outbound_chat_ids = []
+
+# Free models first chain (I2). Override at your own risk.
+models = [
+    "google/gemma-4-26b-a4b-it:free",
+    "google/gemma-4-31b-it:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "google/gemma-4-26b-a4b-it",
+]
+
+# Budget caps (I4) — these are NON-NEGOTIABLE per-call defaults
+[caps]
+global_daily_usd = 1.00
+per_user_daily_usd = 0.25
+per_call_max_usd = 0.025
+per_call_wall_clock_s = 30
+per_call_max_turns = 5
+
+[paths]
+db_path = "~/.longai/state.db"
+mcp_config_path = "~/.longai/mcp.json"
+
+[skills]
+# Locations of sibling skill repos (I12, read-only)
+shared = "~/Documents/GitHub/longai-skills-shared"
+personal = "~/Documents/GitHub/longai-skills-personal"
+work = "~/Documents/GitHub/longai-skills-work"
+
+[logging]
+level = "INFO"
