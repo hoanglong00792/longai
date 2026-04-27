@@ -52,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     learn.add_argument("--apply", default=None, help="Apply candidates from this path")
     learn.add_argument("--since", default="7d")
 
+    refresh = sub.add_parser("refresh", help="Force-refresh free models cache from OpenRouter")
+    _add_common(refresh)
+    refresh.add_argument("--show", action="store_true",
+                         help="Print current cache without refreshing")
+
     return p
 
 
@@ -65,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {
         "bot": cli.cmd_bot, "chat": cli.cmd_chat, "run": cli.cmd_run,
         "test": cli.cmd_test, "dryrun": cli.cmd_dryrun, "learn": cli.cmd_learn,
+        "refresh": cli.cmd_refresh,
     }
     return handlers[cmd](args)
 

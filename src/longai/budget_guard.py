@@ -26,15 +26,22 @@ from longai.persistence import BudgetExceeded, Persistence
 
 # Token prices per 1M input/output. Static table; v2 polls live pricing.
 DEFAULT_PRICES: dict[str, tuple[float, float]] = {
-    # Free tier: $0/$0 (still call this for accounting, but cost = 0)
-    "google/gemma-4-26b-a4b-it:free": (0.0, 0.0),
-    "google/gemma-4-31b-it:free": (0.0, 0.0),
-    "nvidia/nemotron-3-super-120b-a12b:free": (0.0, 0.0),
-    # Paid floor
+    # Paid floor (~13× cheaper than Haiku-4.5)
     "google/gemma-4-26b-a4b-it": (0.06, 0.33),
-    # Conservative fallback for unknown models
+    # Conservative fallback for unknown paid models (over-bills, never under-bills)
     "_unknown_": (3.0, 15.0),
 }
+
+
+# Known free slugs that don't follow the `:free` suffix convention.
+_FREE_EXCEPTIONS = frozenset({
+    "openrouter/free",  # meta-router, free
+})
+
+
+def _is_free_slug(model: str) -> bool:
+    """Free OpenRouter slugs: ending in ':free' OR a known free exception."""
+    return model.endswith(":free") or model in _FREE_EXCEPTIONS
 
 COOLDOWN_S = 300  # 5 minutes per dr-agent pattern
 
@@ -85,6 +92,8 @@ class BudgetGuard:
         return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     def _price(self, model: str) -> tuple[float, float]:
+        if _is_free_slug(model):
+            return (0.0, 0.0)
         return self._prices.get(model) or self._prices.get("_unknown_", (3.0, 15.0))
 
     def _compute_cost(self, model: str, p_tokens: int, c_tokens: int) -> float:

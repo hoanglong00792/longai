@@ -76,11 +76,61 @@ def cmd_dryrun(args: argparse.Namespace) -> int:
         print(f"config error: {e}", file=sys.stderr)
         return 1
     print(f"config OK: {args.config}")
-    print(f"  models: {cfg.models}")
+    print(f"  models: {len(cfg.models)} in chain")
+    for i, m in enumerate(cfg.models):
+        marker = "(paid)" if not (m.endswith(":free") or m == "openrouter/free") else ""
+        print(f"    {i+1:2d}. {m} {marker}")
     print(f"  caps: ${cfg.caps.global_daily_usd}/day global, ${cfg.caps.per_user_daily_usd}/user")
     print(f"  db: {cfg.db_path}")
     print(f"  mcp config: {cfg.mcp_config_path}")
     return 0
+
+
+def cmd_refresh(args: argparse.Namespace) -> int:
+    """Force-refresh the free-models cache from OpenRouter (or print current)."""
+    import time
+    import tomllib
+
+    from longai.models_cache import load_cache, refresh as do_refresh
+
+    cfg_path = os.path.expanduser(args.config)
+    if not os.path.exists(cfg_path):
+        print(f"config not found: {cfg_path}", file=sys.stderr)
+        return 1
+    raw = tomllib.loads(open(cfg_path).read())
+    cache_path = str(raw.get("models_refresh", {}).get(
+        "cache_path", "~/.longai/models_cache.json"
+    ))
+    cache_full = os.path.expanduser(cache_path)
+
+    if args.show:
+        entry = load_cache(cache_full)
+        if entry is None:
+            print(f"no cache at {cache_full}")
+            return 1
+        age_s = int(time.time()) - entry.refreshed_ts
+        print(f"cache: {cache_full}")
+        print(f"  refreshed: {age_s}s ago ({age_s // 86400}d {age_s % 86400 // 3600}h)")
+        print(f"  free models: {entry.raw_count}")
+        print(f"  chain ({len(entry.slugs)} entries):")
+        for i, m in enumerate(entry.slugs):
+            print(f"    {i+1:2d}. {m}")
+        return 0
+
+    print(f"refreshing models cache: {cache_full}")
+    entry = do_refresh(cache_full)
+    if entry is None:
+        print("ERROR: refresh failed (network? OpenRouter API down?)", file=sys.stderr)
+        return 1
+    print(f"OK — {entry.raw_count} free + 1 paid floor")
+    for m in entry.slugs:
+        marker = "(paid)" if not (m.endswith(":free") or m == "openrouter/free") else ""
+        print(f"  - {m} {marker}")
+    return 0
+
+
+# `os` import for cmd_refresh
+import os
 
 
 def cmd_run(args: argparse.Namespace) -> int:

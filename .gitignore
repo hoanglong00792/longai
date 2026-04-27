@@ -25,3 +25,7 @@ node_modules/
 .idea/
 *.swp
 test-results/
+/.playwright-mcp
+myenv/
+
+# Build artifacts (uv.lock kept tracked for reproducible installs)

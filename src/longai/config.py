@@ -74,6 +74,25 @@ def load(path: str = "~/.longai/config.toml", *, require_telegram: bool = True) 
     paths_raw = raw.get("paths", {})
     skills_raw = raw.get("skills", {})
     logging_raw = raw.get("logging", {})
+    models_raw = raw.get("models_refresh", {})
+
+    # Resolve the model chain. Order:
+    #   1. Cache (fresh, per refresh policy)
+    #   2. OpenRouter live refresh
+    #   3. Stale cache (refresh failed)
+    #   4. Static `models = [...]` from this config file
+    #   5. Last-resort minimal chain
+    static_chain = list(raw.get("models", []) or [])
+    refresh_policy = str(models_raw.get("policy", "weekly"))
+    cache_path = str(models_raw.get(
+        "cache_path", "~/.longai/models_cache.json"
+    ))
+    from longai.models_cache import resolve_chain
+    resolved_models = resolve_chain(
+        policy=refresh_policy,
+        cache_path=cache_path,
+        static_fallback=static_chain,
+    )
 
     return Config(
         openrouter_api_key=api_key,
@@ -83,12 +102,7 @@ def load(path: str = "~/.longai/config.toml", *, require_telegram: bool = True) 
         telegram_bot_token=tg_token,
         allowed_chat_ids=list(raw.get("allowed_chat_ids", []) or []),
         allowed_outbound_chat_ids=list(raw.get("allowed_outbound_chat_ids", []) or []),
-        models=list(raw.get("models", []) or [
-            "google/gemma-4-26b-a4b-it:free",
-            "google/gemma-4-31b-it:free",
-            "nvidia/nemotron-3-super-120b-a12b:free",
-            "google/gemma-4-26b-a4b-it",
-        ]),
+        models=resolved_models,
         caps=BudgetCaps(
             global_daily_usd=float(caps_raw.get("global_daily_usd", 1.00)),
             per_user_daily_usd=float(caps_raw.get("per_user_daily_usd", 0.25)),

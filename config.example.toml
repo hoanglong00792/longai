@@ -7,13 +7,50 @@ allowed_chat_ids = []
 # Default: empty list = agent can only reply to the originating chat
 allowed_outbound_chat_ids = []
 
-# Free models first chain (I2). Override at your own risk.
+# Free-models-first chain (I2).
+#
+# 10 free tool-capable OpenRouter models in fallback order. When one hits
+# cooldown (rate-limit / 5xx / timeout), the chain rotates to the next.
+# Only after ALL free models are bench-pressed does it fall to paid Gemma-4.
+#
+# Refresh this list: `bash scripts/refresh_models.sh` queries OpenRouter for
+# the current free tool-capable models and rewrites this section.
 models = [
     "google/gemma-4-26b-a4b-it:free",
     "google/gemma-4-31b-it:free",
+    "minimax/minimax-m2.5:free",
+    "tencent/hy3-preview:free",
     "nvidia/nemotron-3-super-120b-a12b:free",
+    "inclusionai/ling-2.6-flash:free",
+    "inclusionai/ling-2.6-1t:free",
+    "openrouter/free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
+    "nvidia/nemotron-nano-12b-v2-vl:free",
+    "nvidia/nemotron-nano-9b-v2:free",
+    "openai/gpt-oss-120b:free",
+    "openai/gpt-oss-20b:free",
+    "qwen/qwen3-coder:free",
+    "qwen/qwen3-next-80b-a3b-instruct:free",
+    "z-ai/glm-4.5-air:free",
+    # PAID FLOOR — only used when EVERY free model above is on cooldown
     "google/gemma-4-26b-a4b-it",
 ]
+
+# Auto-refresh of free model list against OpenRouter API.
+#
+# At every CLI/bot startup, the model chain is resolved in this order:
+#   1. ~/.longai/models_cache.json (if fresh per `policy` below)
+#   2. live refresh from OpenRouter
+#   3. stale cache (if live refresh fails — e.g., offline)
+#   4. the static `models = [...]` block above
+#   5. minimal hardcoded fallback chain (Gemma:free → paid Gemma)
+#
+# So the bot still starts even with no network. Manual refresh:
+#   `bash scripts/refresh_models.sh --user-config`
+[models_refresh]
+policy = "weekly"  # "startup" | "daily" | "weekly" | "monthly" | "manual" | "never"
+cache_path = "~/.longai/models_cache.json"
 
 # Budget caps (I4) — these are NON-NEGOTIABLE per-call defaults
 [caps]

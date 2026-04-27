@@ -19,10 +19,16 @@ def test_panic_on_missing_api_key(tmp_path, monkeypatch):
 def test_loads_with_api_key_env(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
     cfg = tmp_path / "config.toml"
-    cfg.write_text(textwrap.dedent("""
+    # `[models_refresh] policy = "manual"` + non-existent cache_path forces
+    # the loader to fall back to the static `models = [...]` list (no network,
+    # no shared cache file), so the test stays hermetic.
+    cfg.write_text(textwrap.dedent(f"""
         allowed_chat_ids = [12345]
         allowed_outbound_chat_ids = []
         models = ["x/y:free", "x/y"]
+        [models_refresh]
+        policy = "manual"
+        cache_path = "{tmp_path}/no_such_cache.json"
         [caps]
         global_daily_usd = 1.00
         per_user_daily_usd = 0.25
