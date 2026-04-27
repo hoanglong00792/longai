@@ -1,0 +1,75 @@
+# tests/test_skill_loader.py
+"""I12 — read-only skill loader: list and load (8KB cap)."""
+import json
+import os
+
+import pytest
+
+from longai_mcps.skill_loader.server import (
+    _list_skills_impl,
+    _load_skill_impl,
+)
+
+
+@pytest.fixture
+def fake_repos(tmp_path, monkeypatch):
+    """Build three sibling skill repos with one skill each."""
+    shared = tmp_path / "shared" / "skills" / "alpha"
+    shared.mkdir(parents=True)
+    (shared / "SKILL.md").write_text(
+        "---\nname: alpha\ndescription: Test alpha skill\naccess: shared\n---\n# Alpha\nBody of alpha."
+    )
+    personal = tmp_path / "personal" / "skills" / "beta"
+    personal.mkdir(parents=True)
+    (personal / "SKILL.md").write_text(
+        "---\nname: beta\ndescription: Test beta skill\naccess: personal\n---\n# Beta\n" + ("X" * 10000)
+    )
+    work = tmp_path / "work" / "skills" / "gamma"
+    work.mkdir(parents=True)
+    (work / "SKILL.md").write_text(
+        "---\nname: gamma\ndescription: Test gamma skill\n---\n# Gamma\nShort body."
+    )
+    monkeypatch.setenv("LONGAI_SKILLS_SHARED", str(tmp_path / "shared"))
+    monkeypatch.setenv("LONGAI_SKILLS_PERSONAL", str(tmp_path / "personal"))
+    monkeypatch.setenv("LONGAI_SKILLS_WORK", str(tmp_path / "work"))
+    return tmp_path
+
+
+def test_list_skills_returns_all(fake_repos):
+    out = _list_skills_impl(query=None, access=None)
+    names = {s["name"] for s in out["skills"]}
+    assert names == {"alpha", "beta", "gamma"}
+
+
+def test_list_skills_query_filter(fake_repos):
+    out = _list_skills_impl(query="alpha", access=None)
+    names = {s["name"] for s in out["skills"]}
+    assert names == {"alpha"}
+
+
+def test_list_skills_access_filter(fake_repos):
+    out = _list_skills_impl(query=None, access="personal")
+    names = {s["name"] for s in out["skills"]}
+    assert names == {"beta"}
+
+
+def test_load_skill_returns_body(fake_repos):
+    out = _load_skill_impl("alpha")
+    assert "Body of alpha" in out["body"]
+
+
+def test_load_skill_strips_frontmatter(fake_repos):
+    out = _load_skill_impl("alpha")
+    assert "---" not in out["body"][:5]
+    assert "name: alpha" not in out["body"]
+
+
+def test_load_skill_capped_at_8kb(fake_repos):
+    out = _load_skill_impl("beta")
+    assert len(out["body"]) <= 8500  # cap + truncation marker headroom
+    assert "[...skill body truncated" in out["body"]
+
+
+def test_unknown_skill_returns_error(fake_repos):
+    out = _load_skill_impl("nonexistent")
+    assert "error" in out
