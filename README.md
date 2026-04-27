@@ -55,10 +55,31 @@ That's it. The bot picks from a chain of free OpenRouter models automatically.
 > **Why `./longai` and not `uv run longai`?** On Apple Silicon Macs, `uv run`
 > can silently swap arm64 wheels for x86_64 ones, causing `incompatible
 > architecture` errors. The `./longai` wrapper forces arm64 and bypasses this.
-> Always use `./longai` on macOS. Alias it for convenience:
-> ```bash
-> echo "alias longai='$(pwd)/longai'" >> ~/.zshrc && source ~/.zshrc
-> ```
+> Always use `./longai` on macOS.
+
+---
+
+## Install as a global CLI (any terminal)
+
+Pick one — the wrapper resolves its own location, so all three keep working
+after `git pull`:
+
+```bash
+# 1. Symlink (recommended). Make sure ~/.local/bin is in PATH.
+mkdir -p ~/.local/bin && ln -sf "$(pwd)/longai" ~/.local/bin/longai
+
+# 2. Shell alias.
+echo "alias longai='$(pwd)/longai'" >> ~/.zshrc && source ~/.zshrc
+
+# 3. PATH the repo directly.
+echo "export PATH=\"$(pwd):\$PATH\"" >> ~/.zshrc && source ~/.zshrc
+```
+
+Verify from anywhere:
+
+```bash
+cd ~ && longai dryrun
+```
 
 ---
 

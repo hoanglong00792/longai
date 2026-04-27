@@ -12,10 +12,21 @@
 #   ./longai chat
 #   ./longai bot
 #
-# Recommended: alias longai='/path/to/repo/longai' in your shell rc.
+# Install as a global CLI (any of these three):
+#   1. Alias:    alias longai='/abs/path/to/repo/longai'
+#   2. Symlink:  ln -sf "$(pwd)/longai" ~/.local/bin/longai   (needs ~/.local/bin in PATH)
+#   3. PATH:     export PATH="/abs/path/to/repo:$PATH"
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve the wrapper's real location even when invoked through a symlink
+# (so `~/.local/bin/longai -> /repo/longai` still finds the venv at /repo/.venv).
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -L "${SCRIPT_PATH}" ]; do
+    LINK_DIR="$(cd -P "$(dirname "${SCRIPT_PATH}")" && pwd)"
+    SCRIPT_PATH="$(readlink "${SCRIPT_PATH}")"
+    [[ "${SCRIPT_PATH}" != /* ]] && SCRIPT_PATH="${LINK_DIR}/${SCRIPT_PATH}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SCRIPT_PATH}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}"
 
 ARCH_PREFIX=""
