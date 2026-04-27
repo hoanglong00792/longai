@@ -148,3 +148,69 @@ class Persistence:
             {"role": r["role"], "content": r["content"], "tokens": r["tokens"], "ts": r["ts"]}
             for r in reversed(kept)
         ]
+
+    # ----- Budget debits -----
+
+    def debit(
+        self,
+        *,
+        chat_id: int,
+        model: str,
+        usd: float,
+        day_utc: str,
+        per_user_cap: float,
+        global_cap: float,
+        ts: int | None = None,
+    ) -> tuple[float, float]:
+        """Atomic spend debit with cap check. Raises BudgetExceeded on breach.
+
+        Returns (new_user_total, new_global_total) after debit.
+        Order: check global first (kills all users), then per-user.
+        """
+        ts = ts if ts is not None else int(time.time())
+        assert self._conn is not None
+        with self._tx():
+            global_total = (self._conn.execute(
+                "SELECT COALESCE(SUM(usd),0) FROM debits WHERE day_utc=?",
+                (day_utc,),
+            ).fetchone()[0]) + usd
+            if global_total > global_cap:
+                raise BudgetExceeded("global", global_total, global_cap)
+
+            user_total = (self._conn.execute(
+                "SELECT COALESCE(SUM(usd),0) FROM debits WHERE chat_id=? AND day_utc=?",
+                (chat_id, day_utc),
+            ).fetchone()[0]) + usd
+            if user_total > per_user_cap:
+                raise BudgetExceeded("per_user", user_total, per_user_cap)
+
+            self._conn.execute(
+                "INSERT INTO debits(chat_id, model, usd, day_utc, ts) VALUES(?,?,?,?,?)",
+                (chat_id, model, usd, day_utc, ts),
+            )
+        return user_total, global_total
+
+    def spend_today(self, day_utc: str, chat_id: int | None = None) -> float:
+        assert self._conn is not None
+        if chat_id is None:
+            row = self._conn.execute(
+                "SELECT COALESCE(SUM(usd),0) FROM debits WHERE day_utc=?", (day_utc,),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT COALESCE(SUM(usd),0) FROM debits WHERE chat_id=? AND day_utc=?",
+                (chat_id, day_utc),
+            ).fetchone()
+        return float(row[0])
+
+    @contextmanager
+    def _tx(self) -> Iterator[None]:
+        """Immediate transaction for atomic spend check + insert."""
+        assert self._conn is not None
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
