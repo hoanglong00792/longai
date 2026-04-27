@@ -157,6 +157,39 @@ longai learn --apply ~/.longai/candidates-*.md
 
 ---
 
+## Alternative provider: local Ollama
+
+You can run the entire bot against a **local Ollama server** instead of
+OpenRouter — same code path, different endpoint. Useful for offline or private
+chat.
+
+> **Caveat:** small local models handle multi-step tool composition unreliably.
+> Use Ollama for casual chat; switch back to OpenRouter for anything that
+> chains tools (Playwright research, EVM tracing, etc.).
+
+```bash
+brew install ollama && ollama serve &
+ollama pull gemma4:e4b
+export OPENROUTER_BASE_URL=http://localhost:11434/v1
+export OPENROUTER_API_KEY=ollama   # any non-empty string
+
+# Override the model chain
+cat >> ~/.longai/config.toml <<'EOF'
+
+[models_refresh]
+policy = "manual"
+
+models = ["gemma4:e4b"]
+EOF
+
+./longai dryrun    # confirm models = [gemma4:e4b]
+./longai run "say hi"
+```
+
+To flip back: `unset OPENROUTER_BASE_URL` and remove the override block.
+
+---
+
 ## Re-init after `git pull`
 
 When pulling new changes, especially if dependencies or MCP servers change:

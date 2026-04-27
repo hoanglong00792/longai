@@ -1,22 +1,36 @@
 # `longai`
 
-Personal Telegram bot for ≤10 trusted users. Free-models-first agent loop on
-OpenRouter, with a local CLI for testing without Telegram.
+A personal Telegram bot and local CLI that holds a conversation with you,
+runs tools when it needs to, and stays under a dollar a day. It picks free
+models from OpenRouter automatically, falls back through a chain when one
+goes down, and never silently overspends.
 
-> **Status:** v1 working end-to-end. See [`INVARIANTS.md`](./INVARIANTS.md) for
-> the 12 non-negotiable rules.
+It looks like this:
+
+```
+$ longai run "what's ETH trading at"
+~$3,420 (CoinGecko, 12s ago). 24h: +2.1%.
+
+$ longai chat
+> summarize https://vitalik.eth.limo/general/2024/12/01/scaling.html in 3 bullets
+1) ...
+2) ...
+3) ...
+```
+
+Built for one user (you) and up to ten trusted friends. Not a public bot.
 
 ---
 
 ## Quick Start (5 minutes, no Telegram needed)
 
-You will need a free OpenRouter API key. Nothing else is mandatory.
+You need a free OpenRouter key. Nothing else is mandatory.
 
 ### 1. Prerequisites
 
 ```bash
 brew install uv          # Python package manager (required)
-brew install node        # only if you want browser automation (optional)
+brew install node        # for browser automation (recommended)
 ```
 
 ### 2. Clone and set up the venv
@@ -34,13 +48,22 @@ cp config.example.toml ~/.longai/config.toml
 bash scripts/init_mcp.sh       # generates ~/.longai/mcp.json with correct paths
 ```
 
-### 4. API key
+### 4. API key — store it once, every shell sees it
 
-Get a free key at [openrouter.ai](https://openrouter.ai) (no credit card needed for free models):
+Get a free key at [openrouter.ai](https://openrouter.ai) (no credit card needed
+for free models). Drop it into `~/.longai/env` — the `longai` wrapper
+auto-sources this file before launching, so you don't need to export anything
+in your shell rc:
 
 ```bash
-export OPENROUTER_API_KEY=sk-or-v1-...
+cp env.example ~/.longai/env
+chmod 600 ~/.longai/env
+$EDITOR ~/.longai/env          # set OPENROUTER_API_KEY=sk-or-v1-...
 ```
+
+If you'd rather export it the old way: `export OPENROUTER_API_KEY=sk-or-v1-...`.
+The env-file flow is what makes the global CLI install (next section) work in
+fresh terminals.
 
 ### 5. Run it
 
@@ -51,11 +74,6 @@ export OPENROUTER_API_KEY=sk-or-v1-...
 ```
 
 That's it. The bot picks from a chain of free OpenRouter models automatically.
-
-> **Why `./longai` and not `uv run longai`?** On Apple Silicon Macs, `uv run`
-> can silently swap arm64 wheels for x86_64 ones, causing `incompatible
-> architecture` errors. The `./longai` wrapper forces arm64 and bypasses this.
-> Always use `./longai` on macOS.
 
 ---
 
@@ -81,11 +99,6 @@ Verify from anywhere:
 cd ~ && longai dryrun
 ```
 
-> **Secrets in a fresh terminal:** the wrapper auto-sources `~/.longai/env`
-> before launching, so global-CLI invocations pick up `OPENROUTER_API_KEY`
-> etc. without you having to export them in every shell. Copy the template:
-> `cp env.example ~/.longai/env && chmod 600 ~/.longai/env`, then edit.
-
 ---
 
 ## Adding optional capabilities
@@ -98,23 +111,8 @@ cd ~ && longai dryrun
 | **On-chain ABI decoding** | Set `ETHERSCAN_API_KEY=...` |
 | **Custom RPC** | Set `LONGAI_RPC_URL_ETHEREUM=https://...` etc. — defaults use LlamaRPC |
 
-Full details in [`SETUP.md`](./SETUP.md).
-
----
-
-## MCP toolbelt (9 servers, ~40 tools)
-
-| Server | Tools | Purpose |
-|---|---|---|
-| `playwright` (Microsoft, npx) | 21× `browser_*` | Browser automation, charts, login-walled pages |
-| `longai-web-search` | `web_search` | Tavily-summarized search (~1-2s, 1000 free credits/mo) |
-| `longai-url-fetch` | `fetch_url` | Twitter via vxtwitter, articles via trafilatura |
-| `longai-evm` | `eth_call`, `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `etherscan_get_abi` | Read-only on-chain queries |
-| `longai-on-chain-ta` | `coingecko_token_info`, `dexscreener_pairs`, `combined_token_analysis` | Crypto fundamentals |
-| `longai-skill-loader` | `list_skills`, `load_skill` | Read-only access to sibling skill repos (I12) |
-| `longai-memory` | `recall_memory`, `save_memory` | Long-term preferences/domain memory (I7) |
-| `longai-calc` | `calculate` | Safe arithmetic (no `eval()`) |
-| `longai-telegram-out` | `send_message` | Outbound DMs (I8 whitelist gate) |
+Full details, alternative providers (local Ollama), and troubleshooting in
+[`SETUP.md`](./SETUP.md).
 
 ---
 
@@ -138,63 +136,31 @@ Full details in [`SETUP.md`](./SETUP.md).
 ./longai learn --apply <p>   # commit reviewed candidates to memory store
 ```
 
-`learn` proposes memory entries from your conversation history but never applies
-them automatically — you review and approve. See [`INVARIANTS.md`](./INVARIANTS.md) (I7).
-
----
-
-## Alternative provider: local Ollama
-
-You can run the entire bot against a **local Ollama server** instead of
-OpenRouter — same code path, different endpoint. Useful for offline or private
-chat.
-
-> **Caveat:** small local models handle multi-step tool composition unreliably.
-> Use Ollama for casual chat; switch back to OpenRouter for anything that
-> chains tools (Playwright research, EVM tracing, etc.).
-
-```bash
-brew install ollama && ollama serve &
-ollama pull gemma4:e4b
-export OPENROUTER_BASE_URL=http://localhost:11434/v1
-export OPENROUTER_API_KEY=ollama   # any non-empty string
-
-# Override the model chain
-cat >> ~/.longai/config.toml <<'EOF'
-
-[models_refresh]
-policy = "manual"
-
-models = ["gemma4:e4b"]
-EOF
-
-./longai dryrun    # confirm models = [gemma4:e4b]
-./longai run "say hi"
-```
-
-To flip back: `unset OPENROUTER_BASE_URL` and remove the override block.
+`learn` proposes memory entries from your conversation history but never
+applies them automatically — you review and approve.
 
 ---
 
 ## Tests
 
 ```bash
-arch -arm64 .venv/bin/python -m pytest -q                          # 113 unit tests
-bash scripts/check_i3.sh                                            # I3 chokepoint enforcement
-bash scripts/live_replay.sh --tier 1                                # 2 smoke cases against real API
-bash scripts/live_replay.sh --reset-cooldowns --throttle 10         # full sweep, 20 cases
-bash scripts/live_replay.sh --ids smoke_math,smoke_greeting         # re-run specific cases
+arch -arm64 .venv/bin/python -m pytest -q                          # unit tests
+bash scripts/check_i3.sh                                           # I3 chokepoint enforcement
+bash scripts/live_replay.sh --tier 1                               # 2 smoke cases against real API
+bash scripts/live_replay.sh --reset-cooldowns --throttle 10        # full sweep
+bash scripts/live_replay.sh --ids smoke_math,smoke_greeting        # re-run specific cases
 ```
 
-20 live-replay cases across 7 tiers in `tests/e2e/test_prompts.json` — including
-multi-tool composition exercises that probe the agent's exploration ability.
+Live-replay cases live in `tests/e2e/test_prompts.json`, organized by tier —
+including multi-tool composition exercises that probe the agent's exploration
+ability.
 
 ---
 
-## Architecture
+## How it's wired
 
-Telegram + CLI both call `Loop.run`, which calls `BudgetGuard.chat` (the only
-chat-completion caller), which iterates a fallback chain of free models with
-strict per-call/per-user/global caps.
+See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the MCP toolbelt, tiered
+model routing, persistence layout, and observability.
 
-12 non-negotiable rules: see [`INVARIANTS.md`](./INVARIANTS.md).
+The twelve non-negotiable rules — what won't change, ever — are in
+[`INVARIANTS.md`](./INVARIANTS.md).
