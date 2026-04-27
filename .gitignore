@@ -10,20 +10,33 @@ dist/
 
 # Local
 .env
+.env*
 .envrc
-~/.longai/
+.longai/
 .DS_Store
 
 # Tooling
 .venv/
 venv/
 .uv/
+uv.lock
 node_modules/
 
 # Editor
 .vscode/
 .idea/
 *.swp
+.claude/
+
+# Keys and certs
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+
+# Logs
+*.log
 test-results/
 /.playwright-mcp
 myenv/
