@@ -48,23 +48,21 @@ async def registry_allowlisted(tmp_path):
 
 
 async def test_start_lists_tools(registry):
-    """After start(), tools() returns at least the echo tool."""
+    """After start(), tools() returns at least the echo tool in OpenAI shape."""
     tools = registry.tools()
-    names = [t["name"] for t in tools]
-    assert "echo" in names
+    assert any(t["function"]["name"] == "echo" for t in tools)
 
 
 async def test_call_returns_text(registry):
-    """call("echo", {"text": "hello"}) returns {"text": "hello"}."""
-    result = await registry.call("echo", {"text": "hello"})
-    assert result == {"text": "hello"}
+    """call("echo", {"text": "hello world"}) returns a JSON string containing the text."""
+    result = await registry.call("echo", {"text": "hello world"})
+    assert "hello world" in result
 
 
 async def test_allowlist_filters_tools(registry_allowlisted):
-    """When allowlist excludes echo, tools() is empty."""
+    """When allowlist excludes echo, tools() does not contain echo."""
     tools = registry_allowlisted.tools()
-    names = [t["name"] for t in tools]
-    assert "echo" not in names
+    assert not any(t["function"]["name"] == "echo" for t in tools)
 
 
 async def test_unknown_tool_raises(registry):

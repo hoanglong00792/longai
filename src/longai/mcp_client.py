@@ -39,6 +39,7 @@ class _ServerEntry:
     name: str
     session: ClientSession
     tool_names: set[str]
+    tool_specs: list[Any]  # list of mcp Tool objects
 
 
 class MCPRegistry:
@@ -102,23 +103,30 @@ class MCPRegistry:
         self._servers.clear()
 
     def tools(self) -> list[dict[str, Any]]:
-        """Return tool descriptors visible to the LLM (filtered by allowlist)."""
-        result: list[dict[str, Any]] = []
+        """Return tool descriptors in OpenAI function-calling shape (filtered by allowlist)."""
+        out: list[dict[str, Any]] = []
         for entry in self._servers:
-            for name in entry.tool_names:
-                if self._allowlist is not None and name not in self._allowlist:
+            for tspec in entry.tool_specs:
+                if self._allowlist is not None and tspec.name not in self._allowlist:
                     continue
-                result.append({"name": name, "server": entry.name})
-        return result
+                out.append({
+                    "type": "function",
+                    "function": {
+                        "name": tspec.name,
+                        "description": tspec.description or "",
+                        "parameters": tspec.inputSchema or {"type": "object"},
+                    },
+                })
+        return out
 
-    async def call(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    async def call(self, name: str, args: dict[str, Any]) -> str:
         """Call a tool by name.
 
         Raises:
             UnknownTool: if no server exposes *name* (F15).
 
         Returns:
-            dict with tool output, or ``{"error": "tool crashed: <name>: <e>"}`` on failure (F14).
+            JSON string with tool output, or ``{"error": "..."}`` on failure (F14).
         """
         session: ClientSession | None = None
         for entry in self._servers:
@@ -136,16 +144,17 @@ class MCPRegistry:
                 session.call_tool(name, arguments=args),
                 timeout=PER_CALL_TIMEOUT_S,
             )
+        except asyncio.TimeoutError:
+            return json.dumps({"error": f"tool timeout: {name}"})
         except Exception as exc:
-            return {"error": f"tool crashed: {name}: {exc}"}
+            return json.dumps({"error": f"tool crashed: {name}: {exc}"})
 
-        if result.content:
-            first = result.content[0]
-            if hasattr(first, "text"):
-                return {"text": first.text}
-            if hasattr(first, "model_dump"):
-                return first.model_dump(exclude_none=True)
-        return {}
+        parts = []
+        for c in result.content:
+            text = getattr(c, "text", None)
+            if text is not None:
+                parts.append(text)
+        return "\n".join(parts) if parts else "{}"
 
     # ------------------------------------------------------------------
     # Internal background runner (anyio)
@@ -202,12 +211,14 @@ class MCPRegistry:
                         await session.initialize()
                         list_result = await session.list_tools()
 
-                    tool_names = {t.name for t in list_result.tools}
+                    tool_specs = list_result.tools
+                    tool_names = {t.name for t in tool_specs}
                     self._servers.append(
                         _ServerEntry(
                             name=server_name,
                             session=session,
                             tool_names=tool_names,
+                            tool_specs=tool_specs,
                         )
                     )
                     ready.set()
