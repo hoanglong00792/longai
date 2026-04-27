@@ -214,3 +214,132 @@ class Persistence:
         except Exception:
             self._conn.execute("ROLLBACK")
             raise
+
+    # ----- Cooldowns -----
+
+    def set_cooldown(self, model: str, *, until_ts: int) -> None:
+        assert self._conn is not None
+        self._conn.execute(
+            "INSERT OR REPLACE INTO cooldowns(model, until_ts) VALUES(?,?)",
+            (model, until_ts),
+        )
+
+    def cooled_models(self, *, now_ts: int) -> set[str]:
+        assert self._conn is not None
+        rows = self._conn.execute(
+            "SELECT model FROM cooldowns WHERE until_ts > ?", (now_ts,)
+        ).fetchall()
+        return {row["model"] for row in rows}
+
+    # ----- Traces -----
+
+    def log_trace(
+        self,
+        *,
+        run_id: str,
+        chat_id: int,
+        started_ts: int,
+        stopped: str,
+        spend_usd: float = 0.0,
+        turns: int = 0,
+        error: str | None = None,
+    ) -> None:
+        assert self._conn is not None
+        self._conn.execute(
+            "INSERT OR REPLACE INTO traces"
+            "(run_id, chat_id, started_ts, stopped, spend_usd, turns, error)"
+            " VALUES(?,?,?,?,?,?,?)",
+            (run_id, chat_id, started_ts, stopped, spend_usd, turns, error),
+        )
+
+    # ----- Memories -----
+
+    def memory_save(
+        self,
+        *,
+        type: str,
+        content: str,
+        source: str,
+        chat_id: int | None,
+        created_ts: int,
+        applied_by: str,
+        last_used_ts: int | None = None,
+    ) -> int:
+        assert self._conn is not None
+        cur = self._conn.execute(
+            "INSERT INTO memories(type, content, source, chat_id, created_ts, last_used_ts, applied_by)"
+            " VALUES(?,?,?,?,?,?,?)",
+            (type, content, source, chat_id, created_ts, last_used_ts, applied_by),
+        )
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def memory_recall(
+        self,
+        query: str | None = None,
+        chat_id: int | None = None,
+        type: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        assert self._conn is not None
+        params: list[Any] = []
+        if query is not None:
+            sql = (
+                "SELECT m.id, m.type, m.content, m.source, m.chat_id,"
+                " m.created_ts, m.last_used_ts, m.applied_by"
+                " FROM memories_fts fts"
+                " JOIN memories m ON m.id = fts.rowid"
+                " WHERE memories_fts MATCH ?"
+            )
+            params.append(query)
+            if chat_id is not None:
+                sql += " AND (m.chat_id=? OR m.chat_id IS NULL)"
+                params.append(chat_id)
+            if type is not None:
+                sql += " AND m.type=?"
+                params.append(type)
+            sql += " LIMIT ?"
+            params.append(limit)
+        else:
+            sql = (
+                "SELECT id, type, content, source, chat_id,"
+                " created_ts, last_used_ts, applied_by"
+                " FROM memories WHERE 1=1"
+            )
+            if chat_id is not None:
+                sql += " AND (chat_id=? OR chat_id IS NULL)"
+                params.append(chat_id)
+            if type is not None:
+                sql += " AND type=?"
+                params.append(type)
+            sql += " LIMIT ?"
+            params.append(limit)
+        rows = self._conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    # ----- Cursor -----
+
+    def cursor_get(self, daemon_name: str) -> int:
+        assert self._conn is not None
+        row = self._conn.execute(
+            "SELECT last_message_id FROM learn_cursor WHERE daemon_name=?",
+            (daemon_name,),
+        ).fetchone()
+        return int(row["last_message_id"]) if row is not None else 0
+
+    def cursor_set(self, daemon_name: str, last_message_id: int) -> None:
+        assert self._conn is not None
+        self._conn.execute(
+            "INSERT OR REPLACE INTO learn_cursor(daemon_name, last_message_id) VALUES(?,?)",
+            (daemon_name, last_message_id),
+        )
+
+    # ----- Messages since -----
+
+    def messages_since(self, after_id: int) -> list[dict[str, Any]]:
+        assert self._conn is not None
+        rows = self._conn.execute(
+            "SELECT id, chat_id, role, content, tokens, ts"
+            " FROM messages WHERE id > ? ORDER BY id ASC",
+            (after_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
