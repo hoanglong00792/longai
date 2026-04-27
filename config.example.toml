@@ -75,3 +75,49 @@ work = ""
 
 [logging]
 level = "INFO"
+
+# ── Tiered model routing (OPTIONAL — opt in by replacing `models = [...]` above) ──
+#
+# When the agent loop classifies a request as S/M/L (or you prefix the message
+# with /quick or /deep), BudgetGuard.chat(tier=...) iterates the matching
+# tier's chain, then [models.fallback].chain. Free models stay free regardless
+# of tier — tier only changes which models are reachable and how many turns
+# the loop can take.
+#
+# To enable: delete or comment out the `models = [...]` block above and
+# uncomment the four tables below.
+#
+# [models.tier_S]   # tiny / chat / single-tool — small fast free models
+# chain = [
+#     "nvidia/nemotron-nano-9b-v2:free",
+#     "qwen/qwen3-coder:free",
+# ]
+#
+# [models.tier_M]   # default — 26-70B free models
+# chain = [
+#     "google/gemma-4-26b-a4b-it:free",
+#     "google/gemma-4-31b-it:free",
+#     "meta-llama/llama-3.3-70b-instruct:free",
+# ]
+#
+# [models.tier_L]   # multi-tool research — 120B+ free models
+# chain = [
+#     "nvidia/nemotron-3-super-120b-a12b:free",
+#     "openai/gpt-oss-120b:free",
+#     "inclusionai/ling-2.6-1t:free",
+# ]
+#
+# [models.fallback]   # paid floor — only hit when every tier chain is cooled
+# chain = ["google/gemma-4-26b-a4b-it"]
+#
+# Per-tier cap overrides — optional. Missing keys fall through to the base
+# [caps] values above. The dollar caps (global, per-user, per-call) are
+# tier-agnostic by design — only turns and wall-clock vary.
+#
+# [caps.tier_S]
+# per_call_max_turns = 3
+# per_call_wall_clock_s = 15
+#
+# [caps.tier_L]
+# per_call_max_turns = 12
+# per_call_wall_clock_s = 90

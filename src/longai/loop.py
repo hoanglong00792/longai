@@ -18,9 +18,11 @@ from longai.budget_guard import (
     CallTimeout,
     Unauthorized,
 )
+from longai.config import BudgetCaps
 from longai.mcp_client import MCPRegistry
 from longai.persistence import BudgetExceeded
 from longai.security import sanitize_tool_output
+from longai.tier_classifier import classify as classify_tier
 
 
 @dataclass
@@ -32,14 +34,35 @@ class LoopResult:
     turns: int
     stopped: str  # "final" | "max_turns" | "stuck_loop" | "budget" | "timeout" | "error"
     model_used: str
+    tier: str = "M"
     error: str | None = None
 
 
 class Loop:
-    def __init__(self, *, guard: BudgetGuard, mcp: MCPRegistry, max_turns: int = 5):
+    def __init__(
+        self,
+        *,
+        guard: BudgetGuard,
+        mcp: MCPRegistry,
+        max_turns: int | None = None,
+        caps: BudgetCaps | None = None,
+    ):
+        """Wire either a flat ``max_turns`` (tests, single-tier mode) or a
+        ``caps`` object that supplies per-tier limits via ``turns_for(tier)``.
+        If both are given, ``max_turns`` overrides — useful for forcing a
+        bounded loop in tests regardless of tier-routed defaults.
+        """
         self._g = guard
         self._mcp = mcp
-        self._max_turns = max_turns
+        self._max_turns_override = max_turns
+        self._caps = caps
+
+    def _max_turns_for(self, tier: str) -> int:
+        if self._max_turns_override is not None:
+            return self._max_turns_override
+        if self._caps is not None:
+            return self._caps.turns_for(tier)
+        return 5
 
     @staticmethod
     def _hash_call(name: str, args_str: str) -> str:
@@ -57,7 +80,15 @@ class Loop:
         system_prompt: str,
         user_message: str,
         history: list[dict[str, Any]],
+        tier: str | None = None,
     ) -> LoopResult:
+        # Classify if no explicit tier given. The classifier may also strip
+        # /deep // /quick prefix noise from the message before forwarding.
+        if tier is None:
+            tier, user_message = classify_tier(user_message)
+
+        max_turns = self._max_turns_for(tier)
+
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             *[{"role": m["role"], "content": m["content"]} for m in history],
@@ -69,31 +100,32 @@ class Loop:
         total_spend = 0.0
         last_model = ""
 
-        for turn in range(1, self._max_turns + 1):
+        for turn in range(1, max_turns + 1):
             try:
                 cr = await self._g.chat(
-                    chat_id=chat_id, messages=messages, tools=self._mcp.tools() or None,
+                    chat_id=chat_id, messages=messages,
+                    tools=self._mcp.tools() or None, tier=tier,
                 )
             except BudgetExceeded as e:
                 return LoopResult(
                     text=f"Daily budget reached ({e.scope}). Resets at UTC midnight.",
                     prompt_tokens=total_p, completion_tokens=total_c,
                     spend_usd=total_spend, turns=turn - 1, stopped="budget",
-                    model_used=last_model, error=str(e),
+                    model_used=last_model, tier=tier, error=str(e),
                 )
             except CallTimeout as e:
                 return LoopResult(
                     text="That took too long. Try again with a simpler request.",
                     prompt_tokens=total_p, completion_tokens=total_c,
                     spend_usd=total_spend, turns=turn - 1, stopped="timeout",
-                    model_used=last_model, error=str(e),
+                    model_used=last_model, tier=tier, error=str(e),
                 )
             except (Unauthorized, AllModelsCooled) as e:
                 return LoopResult(
                     text="LLM provider unavailable. Try again in a few minutes.",
                     prompt_tokens=total_p, completion_tokens=total_c,
                     spend_usd=total_spend, turns=turn - 1, stopped="error",
-                    model_used=last_model, error=str(e),
+                    model_used=last_model, tier=tier, error=str(e),
                 )
 
             total_p += cr.prompt_tokens
@@ -106,7 +138,7 @@ class Loop:
                 return LoopResult(
                     text=cr.text, prompt_tokens=total_p, completion_tokens=total_c,
                     spend_usd=total_spend, turns=turn, stopped="final",
-                    model_used=last_model,
+                    model_used=last_model, tier=tier,
                 )
 
             # Append assistant message with tool_calls (in OpenAI shape)
@@ -129,13 +161,13 @@ class Loop:
                 if (
                     len(recent_hashes) == 3
                     and len(set(recent_hashes)) == 1
-                    and turn < self._max_turns
+                    and turn < max_turns
                 ):
                     return LoopResult(
                         text=f"Got stuck calling `{tc['name']}` repeatedly. Try rephrasing.",
                         prompt_tokens=total_p, completion_tokens=total_c,
                         spend_usd=total_spend, turns=turn, stopped="stuck_loop",
-                        model_used=last_model,
+                        model_used=last_model, tier=tier,
                         error=f"stuck on {tc['name']}",
                     )
 
@@ -156,6 +188,6 @@ class Loop:
         return LoopResult(
             text="(stopped at max turns; not enough context to finalize)",
             prompt_tokens=total_p, completion_tokens=total_c,
-            spend_usd=total_spend, turns=self._max_turns, stopped="max_turns",
-            model_used=last_model,
+            spend_usd=total_spend, turns=max_turns, stopped="max_turns",
+            model_used=last_model, tier=tier,
         )

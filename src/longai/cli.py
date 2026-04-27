@@ -40,7 +40,7 @@ async def _build_stack(config_path: str, *, require_telegram: bool, max_turns: i
     mem = Memory(p)
     guard = BudgetGuard(
         api_key=cfg.openrouter_api_key, base_url=cfg.openrouter_base_url,
-        models=cfg.models, caps=cfg.caps, persistence=p,
+        model_chains=cfg.model_chains, caps=cfg.caps, persistence=p,
     )
     # Allowlist comes from a static set for v1; future: per-config
     allowlist = {
@@ -66,8 +66,12 @@ async def _build_stack(config_path: str, *, require_telegram: bool, max_turns: i
     }
     mcp = MCPRegistry(cfg.mcp_config_path, allowlist=allowlist)
     await mcp.start()
-    effective_max_turns = max_turns if max_turns is not None else cfg.caps.per_call_max_turns
-    loop = Loop(guard=guard, mcp=mcp, max_turns=effective_max_turns)
+    # When --max-turns is supplied, force-cap the loop regardless of tier.
+    # Otherwise let the loop pick per-tier turns from caps.
+    if max_turns is not None:
+        loop = Loop(guard=guard, mcp=mcp, max_turns=max_turns)
+    else:
+        loop = Loop(guard=guard, mcp=mcp, caps=cfg.caps)
     return cfg, p, mem, mcp, loop
 
 
@@ -79,10 +83,34 @@ def cmd_dryrun(args: argparse.Namespace) -> int:
         print(f"config error: {e}", file=sys.stderr)
         return 1
     print(f"config OK: {args.config}")
-    print(f"  models: {len(cfg.models)} in chain")
-    for i, m in enumerate(cfg.models):
-        marker = "(paid)" if not (m.endswith(":free") or m == "openrouter/free") else ""
-        print(f"    {i+1:2d}. {m} {marker}")
+    # Print tier chains. Legacy (single-chain) configs map all tiers to the
+    # same list — so we collapse to a single section in that case.
+    chains = cfg.model_chains
+    tiered = (
+        chains["S"] != chains["M"] or chains["M"] != chains["L"]
+        or chains.get("fallback")
+    )
+    if tiered:
+        for tier in ("S", "M", "L"):
+            entries = chains.get(tier, [])
+            print(f"  models[tier_{tier}]: {len(entries)}")
+            for i, m in enumerate(entries):
+                marker = "" if (m.endswith(":free") or m == "openrouter/free") else "(paid)"
+                print(f"    {i+1:2d}. {m} {marker}")
+        fb = chains.get("fallback", [])
+        if fb:
+            print(f"  models[fallback]: {len(fb)}")
+            for i, m in enumerate(fb):
+                marker = "" if (m.endswith(":free") or m == "openrouter/free") else "(paid)"
+                print(f"    {i+1:2d}. {m} {marker}")
+        print(f"  turns: S={cfg.caps.turns_for('S')} M={cfg.caps.turns_for('M')} L={cfg.caps.turns_for('L')}")
+        print(f"  wall_clock_s: S={cfg.caps.wall_clock_for('S')} M={cfg.caps.wall_clock_for('M')} L={cfg.caps.wall_clock_for('L')}")
+    else:
+        print(f"  models: {len(cfg.models)} in chain")
+        for i, m in enumerate(cfg.models):
+            marker = "" if (m.endswith(":free") or m == "openrouter/free") else "(paid)"
+            print(f"    {i+1:2d}. {m} {marker}")
+        print(f"  turns: {cfg.caps.per_call_max_turns}, wall_clock_s: {cfg.caps.per_call_wall_clock_s}")
     print(f"  caps: ${cfg.caps.global_daily_usd}/day global, ${cfg.caps.per_user_daily_usd}/user")
     print(f"  db: {cfg.db_path}")
     print(f"  mcp config: {cfg.mcp_config_path}")

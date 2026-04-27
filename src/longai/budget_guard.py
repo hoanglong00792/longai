@@ -70,23 +70,49 @@ class ChatResult:
 
 
 class BudgetGuard:
-    """The single chokepoint to OpenRouter. I3 + I4 enforced here."""
+    """The single chokepoint to OpenRouter. I3 + I4 enforced here.
+
+    Tier-aware: ``chat(tier=)`` selects which model chain to iterate.
+    """
 
     def __init__(
         self,
         *,
         api_key: str,
         base_url: str,
-        models: list[str],
         caps: BudgetCaps,
         persistence: Persistence,
+        model_chains: dict[str, list[str]] | None = None,
+        models: list[str] | None = None,
         prices: dict[str, tuple[float, float]] | None = None,
     ):
+        # Accept either model_chains (preferred) or models (legacy single
+        # chain for tests / migration). Exactly one must be supplied.
+        if model_chains is None and models is None:
+            raise ValueError("BudgetGuard requires model_chains= or models=")
+        if model_chains is None:
+            assert models is not None
+            model_chains = {
+                "S": list(models), "M": list(models),
+                "L": list(models), "fallback": [],
+            }
         self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-        self._models = models
+        self._chains = {k: list(v) for k, v in model_chains.items()}
         self._caps = caps
         self._p = persistence
         self._prices = prices or DEFAULT_PRICES
+
+    def _chain_for(self, tier: str) -> list[str]:
+        primary = self._chains.get(tier, [])
+        fallback = self._chains.get("fallback", [])
+        # Dedup while preserving order — a fallback model may also appear
+        # in a tier chain on legacy configs; we don't want to retry it twice.
+        seen: set[str] = set()
+        out: list[str] = []
+        for m in primary + fallback:
+            if m not in seen:
+                seen.add(m); out.append(m)
+        return out
 
     @staticmethod
     def _today_utc() -> str:
@@ -107,14 +133,17 @@ class BudgetGuard:
         chat_id: int,
         messages: list[dict],
         tools: list[dict] | None,
+        tier: str = "M",
     ) -> ChatResult:
+        chain = self._chain_for(tier)
         cooled = self._p.cooled_models(now_ts=int(time.time()))
-        for model in self._models:
+        for model in chain:
             if model in cooled:
                 continue
             try:
                 return await self._attempt_call(
                     chat_id=chat_id, model=model, messages=messages, tools=tools,
+                    tier=tier,
                 )
             except Unauthorized:
                 raise  # F7: never fall back on 401
@@ -127,16 +156,18 @@ class BudgetGuard:
                 # the whole call when faster models exist in the chain.
                 self._p.set_cooldown(model, until_ts=int(time.time()) + COOLDOWN_S)
                 continue
-        raise AllModelsCooled(f"all of {self._models} are on cooldown")
+        raise AllModelsCooled(f"all of tier_{tier} chain {chain} on cooldown")
 
     async def _attempt_call(
-        self, *, chat_id: int, model: str, messages: list[dict], tools: list[dict] | None,
+        self, *, chat_id: int, model: str, messages: list[dict],
+        tools: list[dict] | None, tier: str = "M",
     ) -> ChatResult:
+        wall_clock = self._caps.wall_clock_for(tier)
         try:
-            async with asyncio.timeout(self._caps.per_call_wall_clock_s):
+            async with asyncio.timeout(wall_clock):
                 resp = await self._raw_call(model=model, messages=messages, tools=tools)
         except asyncio.TimeoutError as e:
-            raise CallTimeout(f"call to {model} exceeded {self._caps.per_call_wall_clock_s}s") from e
+            raise CallTimeout(f"call to {model} exceeded {wall_clock}s") from e
 
         # Compute cost from usage
         usage = resp.usage

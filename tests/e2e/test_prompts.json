@@ -236,5 +236,44 @@
       "min_turns": 2,
       "spend_max": 0.04
     }
+  },
+
+  {
+    "id": "tier_quick_routing",
+    "tier": 1,
+    "category": "tier_routing",
+    "description": "Short greeting should classify to S tier; /quick prefix can also force it.",
+    "message": "hi",
+    "expect": {
+      "stopped": "final",
+      "tier": "S",
+      "spend_max": 0.005
+    }
+  },
+
+  {
+    "id": "tier_default_routing",
+    "tier": 1,
+    "category": "tier_routing",
+    "description": "Plain factual ask without research vocabulary should land on M.",
+    "message": "what does GMX do",
+    "expect": {
+      "stopped": "final",
+      "tier": "M",
+      "spend_max": 0.01
+    }
+  },
+
+  {
+    "id": "tier_deep_routing",
+    "tier": 3,
+    "category": "tier_routing",
+    "description": "Research-vocabulary message should classify to L tier and spend more turns.",
+    "message": "research and compare Aave v3 with Compound v3 — focus on rate models, oracles, and recent risk incidents",
+    "expect": {
+      "stopped_in": ["final", "max_turns"],
+      "tier": "L",
+      "spend_max": 0.04
+    }
   }
 ]

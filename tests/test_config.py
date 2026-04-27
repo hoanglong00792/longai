@@ -70,3 +70,83 @@ def test_telegram_token_required_when_asked(tmp_path, monkeypatch):
     cfg.write_text("allowed_chat_ids = []\n")
     with pytest.raises(ConfigError, match="TELEGRAM_BOT_TOKEN"):
         load(str(cfg), require_telegram=True)
+
+
+def test_legacy_models_populates_all_tiers(tmp_path, monkeypatch):
+    """Legacy single-chain config maps S/M/L to the same chain, fallback empty."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk")
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(textwrap.dedent(f"""
+        allowed_chat_ids = []
+        models = ["a:free", "b:free", "z-paid"]
+        [models_refresh]
+        policy = "manual"
+        cache_path = "{tmp_path}/no_such_cache.json"
+    """))
+    c = load(str(cfg), require_telegram=False)
+    assert c.model_chains["S"] == ["a:free", "b:free", "z-paid"]
+    assert c.model_chains["M"] == c.model_chains["S"]
+    assert c.model_chains["L"] == c.model_chains["S"]
+    assert c.model_chains["fallback"] == []
+
+
+def test_tiered_models_loads_per_tier_chains(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk")
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(textwrap.dedent("""
+        allowed_chat_ids = []
+        [models.tier_S]
+        chain = ["small:free"]
+        [models.tier_M]
+        chain = ["mid:free"]
+        [models.tier_L]
+        chain = ["big:free", "huge:free"]
+        [models.fallback]
+        chain = ["paid"]
+    """))
+    c = load(str(cfg), require_telegram=False)
+    assert c.model_chains["S"] == ["small:free"]
+    assert c.model_chains["M"] == ["mid:free"]
+    assert c.model_chains["L"] == ["big:free", "huge:free"]
+    assert c.model_chains["fallback"] == ["paid"]
+    # legacy `cfg.models` becomes M's chain + fallback for display
+    assert c.models == ["mid:free", "paid"]
+
+
+def test_per_tier_caps_overrides(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk")
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(textwrap.dedent("""
+        allowed_chat_ids = []
+        [models.tier_M]
+        chain = ["m:free"]
+        [caps]
+        per_call_max_turns = 5
+        per_call_wall_clock_s = 30
+        [caps.tier_S]
+        per_call_max_turns = 3
+        per_call_wall_clock_s = 15
+        [caps.tier_L]
+        per_call_max_turns = 12
+        per_call_wall_clock_s = 90
+    """))
+    c = load(str(cfg), require_telegram=False)
+    assert c.caps.turns_for("S") == 3
+    assert c.caps.turns_for("M") == 5
+    assert c.caps.turns_for("L") == 12
+    assert c.caps.wall_clock_for("S") == 15
+    assert c.caps.wall_clock_for("M") == 30
+    assert c.caps.wall_clock_for("L") == 90
+
+
+def test_models_table_without_tier_subsections_errors(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk")
+    cfg = tmp_path / "config.toml"
+    # Just a [models] header with no tier_* — should fail loud
+    cfg.write_text(textwrap.dedent("""
+        allowed_chat_ids = []
+        [models]
+        whatever = 1
+    """))
+    with pytest.raises(ConfigError, match="tier_"):
+        load(str(cfg), require_telegram=False)

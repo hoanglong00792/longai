@@ -236,6 +236,16 @@ if "min_turns" in expect:
     if turns < expect["min_turns"]:
         fails.append(f"turns={turns} < min {expect['min_turns']} (agent skipped tool composition)")
 
+# tier — exact match
+if "tier" in expect and env.get("tier") != expect["tier"]:
+    fails.append(f"tier={env.get('tier')!r} != expected {expect['tier']!r}")
+
+# model_in — model must be in the listed allowlist
+if "model_in" in expect:
+    allow = expect["model_in"]
+    if env.get("model") not in allow:
+        fails.append(f"model={env.get('model')!r} not in {allow!r}")
+
 # rc check (don't fail just on rc — `stopped != final` already implies non-zero)
 status = "PASS" if not fails else "FAIL"
 print(status + "\t" + "; ".join(fails))

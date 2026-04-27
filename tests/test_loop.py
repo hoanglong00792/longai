@@ -92,6 +92,82 @@ async def test_budget_exceeded_returns_envelope(fake_guard, fake_mcp):
     assert "per_user" in (res.error or "")
 
 
+# ── Tier-aware behavior ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_classifier_routes_to_tier_l_on_research_keyword(fake_guard, fake_mcp):
+    """Loop without explicit tier should classify the message and pass tier through."""
+    fake_guard.chat.return_value = _result(text="done")
+    loop = Loop(guard=fake_guard, mcp=fake_mcp, max_turns=5)
+    res = await loop.run(
+        chat_id=1, system_prompt="sys",
+        user_message="research the latest on Solana validators", history=[],
+    )
+    assert res.tier == "L"
+    # Verify guard.chat was called with tier="L"
+    assert fake_guard.chat.call_args.kwargs["tier"] == "L"
+
+
+@pytest.mark.asyncio
+async def test_classifier_routes_to_tier_s_on_short_greeting(fake_guard, fake_mcp):
+    fake_guard.chat.return_value = _result(text="hi back")
+    loop = Loop(guard=fake_guard, mcp=fake_mcp, max_turns=5)
+    res = await loop.run(
+        chat_id=1, system_prompt="sys", user_message="hi", history=[],
+    )
+    assert res.tier == "S"
+
+
+@pytest.mark.asyncio
+async def test_explicit_tier_overrides_classifier(fake_guard, fake_mcp):
+    fake_guard.chat.return_value = _result(text="done")
+    loop = Loop(guard=fake_guard, mcp=fake_mcp, max_turns=5)
+    res = await loop.run(
+        chat_id=1, system_prompt="sys",
+        user_message="hi", history=[], tier="L",
+    )
+    assert res.tier == "L"
+    assert fake_guard.chat.call_args.kwargs["tier"] == "L"
+
+
+@pytest.mark.asyncio
+async def test_quick_prefix_is_stripped_before_llm(fake_guard, fake_mcp):
+    """The /deep /quick prefix is for routing; the LLM shouldn't see it."""
+    fake_guard.chat.return_value = _result(text="ok")
+    loop = Loop(guard=fake_guard, mcp=fake_mcp, max_turns=5)
+    await loop.run(
+        chat_id=1, system_prompt="sys",
+        user_message="/deep tell me about pendle", history=[],
+    )
+    sent = fake_guard.chat.call_args.kwargs["messages"]
+    user_msg = next(m for m in sent if m["role"] == "user")
+    assert "/deep" not in user_msg["content"]
+    assert user_msg["content"].startswith("tell me about")
+
+
+@pytest.mark.asyncio
+async def test_caps_tier_sets_per_tier_max_turns(fake_guard, fake_mcp):
+    """Loop with caps= reads turn limit per-tier from caps.turns_for()."""
+    from longai.config import BudgetCaps
+    caps = BudgetCaps(per_call_max_turns=5, by_tier={"L": {"per_call_max_turns": 9}})
+    # Always emit a tool call so the loop runs out of turns
+    fake_guard.chat.return_value = _result(
+        text="", tool_calls=[{"id": "t", "name": "echo", "arguments": '{"k":"v"}'}],
+    )
+    fake_mcp.call.return_value = "ok"
+    loop = Loop(guard=fake_guard, mcp=fake_mcp, caps=caps)
+    res = await loop.run(
+        chat_id=1, system_prompt="sys",
+        user_message="research how stablecoin issuers verify reserves",
+        history=[],
+    )
+    # Stuck-loop trap may fire before max_turns since args are constant —
+    # but tier should still be L, and turns should not exceed 9.
+    assert res.tier == "L"
+    assert res.turns <= 9
+
+
 @pytest.mark.asyncio
 async def test_sanitize_tool_output_runs_on_results(fake_guard, fake_mcp):
     """I11 — tool outputs are sanitized before going back into context."""

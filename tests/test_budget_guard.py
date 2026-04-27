@@ -118,3 +118,96 @@ async def test_all_models_cooled_raises(caps_tiny, persistence):
     )
     with pytest.raises(AllModelsCooled):
         await g.chat(chat_id=1, messages=[{"role": "user", "content": "x"}], tools=None)
+
+
+# ── Tier-aware routing ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_tier_l_uses_tier_l_chain(caps_tiny, persistence, monkeypatch):
+    """tier='L' iterates the L chain (then fallback), not S or M."""
+    g = BudgetGuard(
+        api_key="sk", base_url="x",
+        model_chains={
+            "S": ["small"], "M": ["mid"], "L": ["big-1", "big-2"],
+            "fallback": ["paid"],
+        },
+        caps=caps_tiny, persistence=persistence,
+        prices={s: (0, 0) for s in ("small", "mid", "big-1", "big-2", "paid")},
+    )
+    monkeypatch.setattr(g, "_raw_call", AsyncMock(return_value=_mk_response("ok", model="big-1")))
+    res = await g.chat(
+        chat_id=1, messages=[{"role": "user", "content": "x"}],
+        tools=None, tier="L",
+    )
+    assert res.model_used == "big-1"
+
+
+@pytest.mark.asyncio
+async def test_tier_falls_through_to_fallback(caps_tiny, persistence, monkeypatch):
+    """When the tier's chain is fully cooled, fallback chain is tried."""
+    persistence.set_cooldown("big-1", until_ts=10**12)
+    g = BudgetGuard(
+        api_key="sk", base_url="x",
+        model_chains={"S": [], "M": ["mid"], "L": ["big-1"], "fallback": ["paid"]},
+        caps=caps_tiny, persistence=persistence,
+        prices={"mid": (0, 0), "big-1": (0, 0), "paid": (1, 1)},
+    )
+    monkeypatch.setattr(g, "_raw_call", AsyncMock(return_value=_mk_response("ok", model="paid")))
+    res = await g.chat(
+        chat_id=1, messages=[{"role": "user", "content": "x"}],
+        tools=None, tier="L",
+    )
+    assert res.model_used == "paid"
+
+
+@pytest.mark.asyncio
+async def test_legacy_models_kwarg_routes_all_tiers_same(caps_tiny, persistence, monkeypatch):
+    """Backward compat: legacy `models=[...]` populates every tier identically."""
+    g = BudgetGuard(
+        api_key="sk", base_url="x", models=["m1"],
+        caps=caps_tiny, persistence=persistence, prices={"m1": (1, 1)},
+    )
+    monkeypatch.setattr(g, "_raw_call", AsyncMock(return_value=_mk_response("ok", model="m1")))
+    for tier in ("S", "M", "L"):
+        res = await g.chat(
+            chat_id=1, messages=[{"role": "user", "content": "x"}],
+            tools=None, tier=tier,
+        )
+        assert res.model_used == "m1"
+
+
+@pytest.mark.asyncio
+async def test_wall_clock_uses_tier_override(caps_tiny, persistence, monkeypatch):
+    """tier_L wall-clock override extends the per-call timeout."""
+    caps_tiny.by_tier = {"L": {"per_call_wall_clock_s": 60}}
+    g = BudgetGuard(
+        api_key="sk", base_url="x", models=["m1"],
+        caps=caps_tiny, persistence=persistence, prices={"m1": (1, 1)},
+    )
+    captured: list[int] = []
+
+    async def fake_call(model, messages, tools):
+        # Probe what timeout context was active by reading caps
+        return _mk_response("ok", model=model)
+
+    monkeypatch.setattr(g, "_raw_call", AsyncMock(side_effect=fake_call))
+    # Just verify the path works at tier=L; explicit wall-clock probe is
+    # done indirectly via _attempt_call's asyncio.timeout, which we can't
+    # introspect post-hoc without monkeypatching asyncio.
+    res = await g.chat(
+        chat_id=1, messages=[{"role": "user", "content": "x"}],
+        tools=None, tier="L",
+    )
+    assert res.model_used == "m1"
+    # Ensure the caps method returns the override
+    assert caps_tiny.wall_clock_for("L") == 60
+    assert caps_tiny.wall_clock_for("M") == 5  # default from caps_tiny
+
+
+def test_budget_guard_requires_chains_or_models(caps_tiny, persistence):
+    with pytest.raises(ValueError, match="model_chains"):
+        BudgetGuard(
+            api_key="sk", base_url="x",
+            caps=caps_tiny, persistence=persistence,
+        )
