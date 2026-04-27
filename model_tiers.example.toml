@@ -1,0 +1,34 @@
+# model_tiers.example.toml — copy to ~/.longai/model_tiers.local.toml
+#
+# Used by `bash scripts/refresh_models.sh --tiered`. Tells the auto-classifier
+# what to do with slugs the heuristic gets wrong.
+#
+# Resolution order: skip → overrides → auto-classify by slug param hint.
+# Anything not listed here is auto-classified.
+
+# ── Manual tier pins ────────────────────────────────────────────────────
+# Override the auto-classifier for specific slugs. Tier values:
+#   "S"        — small / chat / single tool
+#   "M"        — default
+#   "L"        — multi-tool research
+#   "FALLBACK" — paid floor / last-resort chain
+#
+# Common cases:
+#   - Slugs with no parameter hint (e.g. qwen3-coder, hy3-preview, openrouter/free)
+#   - Models whose displayed param count understates capability (a4b "active params")
+#   - Free models that are unreliable in practice (demote to S so they're rarely picked)
+
+[overrides]
+# "qwen/qwen3-coder:free" = "L"            # ~480B, slug doesn't say
+# "google/gemma-4-26b-a4b-it:free" = "M"   # 26B active but the M tier is the right fit
+# "openrouter/free" = "S"                  # meta-router, fast
+# "tencent/hy3-preview:free" = "M"         # no slug hint, but capable
+
+# ── Skip list ──────────────────────────────────────────────────────────
+# Drop these slugs from every tier chain — they advertise tools support but
+# fail in practice (OCR-only, RP-only, broken tool-call shape, etc.).
+
+[skip]
+slugs = [
+  # "baidu/qianfan-ocr-fast:free",  # OCR-specialized, performs poorly on agent loops
+]
