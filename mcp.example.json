@@ -49,6 +49,18 @@
       "args": ["-m", "longai_mcps.on_chain_ta.server"]
     },
 
+    "longai-web-search": {
+      "_comment": "Tavily-backed AI search with key rotation. 1000 free credits/month per key in TAVILY_API_KEYS (comma-separated).",
+      "command": "PLACEHOLDER_VENV_PYTHON",
+      "args": ["-m", "longai_mcps.web_search.server"]
+    },
+
+    "longai-url-fetch": {
+      "_comment": "URL → cleaned text. Twitter/X routes through api.vxtwitter.com; everything else uses trafilatura with regex fallback.",
+      "command": "PLACEHOLDER_VENV_PYTHON",
+      "args": ["-m", "longai_mcps.url_fetch.server"]
+    },
+
     "longai-telegram-out": {
       "_comment": "Outbound Telegram messages — gated by I8 whitelist. Disabled until you set TELEGRAM_BOT_TOKEN and LONGAI_OUTBOUND_WHITELIST in env.",
       "command": "PLACEHOLDER_VENV_PYTHON",

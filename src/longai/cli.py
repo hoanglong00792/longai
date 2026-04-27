@@ -51,6 +51,8 @@ async def _build_stack(config_path: str, *, require_telegram: bool):
         "list_skills", "load_skill",
         "coingecko_token_info", "dexscreener_pairs", "combined_token_analysis",
         "analyze_ticker",
+        # Cheap web research (Tavily + vxtwitter + trafilatura)
+        "web_search", "fetch_url",
         # tradingview-mcp allowlist (5 tools)
         "get_technical_analysis", "get_candlestick_patterns",
         "market_snapshot", "financial_news", "market_sentiment",

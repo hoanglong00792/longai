@@ -79,11 +79,26 @@ If any prerequisite fails, the script aborts with a clear message.
 ### 5. Set environment variables
 
 ```bash
-export OPENROUTER_API_KEY=sk-or-v1-...     # required — get one at https://openrouter.ai
-export TELEGRAM_BOT_TOKEN=123:abc...        # required for `longai bot`; optional for `longai chat/run/test`
+# Required
+export OPENROUTER_API_KEY=sk-or-v1-...     # get at https://openrouter.ai
+export TELEGRAM_BOT_TOKEN=123:abc...        # required for `longai bot`; optional for chat/run/test
+
+# Recommended — enables web_search MCP (Tavily, 1000 free credits/month per key)
+export TAVILY_API_KEYS=tvly-...,tvly-...    # comma-separated for rotation; get at https://tavily.com
+# (legacy single-key form also accepted: TAVILY_API_KEY=tvly-...)
+
+# Optional — enables EVM RPC tools beyond default LlamaRPC
+export ETHERSCAN_API_KEY=...                # for the etherscan_get_abi tool
 ```
 
 For persistence, add these to `~/.zshrc` or use a `.env` file (see `.env.example`).
+
+> **Why TAVILY_API_KEYS is recommended:** the bot defaults to Playwright for any
+> web research, which is slow (~10-30s per query). Tavily returns a synthesized
+> answer plus 3 sources in ~1-2s and is token-cheap. With Tavily configured, the
+> agent learns to use `web_search` for general "what is X / latest Y" questions
+> and only escalates to Playwright for charts, login-walled pages, and
+> interactive sites.
 
 ### 6. Verify everything
 
