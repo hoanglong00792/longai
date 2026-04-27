@@ -47,3 +47,15 @@ class Tracer:
     def output(self, env: dict) -> None:
         if self._dir is None: return
         (self._dir / "07_output.json").write_text(json.dumps(env, indent=2))
+
+    def timing(self, phase: str, ms: float, **extra: Any) -> None:
+        """Append a timing record. Phase is a short label like 'chat',
+        'tool', 'enrich.market'. ``ms`` is wall-clock; extra kwargs add
+        context (model, name, turn, symbol). No-op when trace_dir is None.
+        """
+        if self._dir is None: return
+        rec: dict[str, Any] = {"phase": phase, "ms": round(float(ms), 1),
+                               "ts": time.time()}
+        rec.update(extra)
+        with (self._dir / "06_timings.jsonl").open("a") as f:
+            f.write(json.dumps(rec) + "\n")

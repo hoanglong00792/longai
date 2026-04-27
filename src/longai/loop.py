@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from longai.trace import Tracer
 
 from longai.budget_guard import (
     AllModelsCooled,
@@ -109,6 +113,7 @@ class Loop:
         user_message: str,
         history: list[dict[str, Any]],
         tier: str | None = None,
+        tracer: "Tracer | None" = None,
     ) -> LoopResult:
         # Classify if no explicit tier given. The classifier may also strip
         # /deep // /quick prefix noise from the message before forwarding.
@@ -129,6 +134,7 @@ class Loop:
         last_model = ""
 
         for turn in range(1, max_turns + 1):
+            turn_t0 = time.perf_counter()
             try:
                 cr = await self._g.chat(
                     chat_id=chat_id, messages=messages,
@@ -161,8 +167,17 @@ class Loop:
             total_spend += cr.spend_usd
             last_model = cr.model_used
 
+            if tracer is not None:
+                tracer.timing("chat", cr.latency_ms, model=cr.model_used,
+                              tier=tier, turn=turn,
+                              prompt_tokens=cr.prompt_tokens,
+                              completion_tokens=cr.completion_tokens)
+
             # No tool calls → final answer
             if not cr.tool_calls:
+                if tracer is not None:
+                    turn_ms = (time.perf_counter() - turn_t0) * 1000.0
+                    tracer.timing("turn", turn_ms, turn=turn, stopped="final")
                 return LoopResult(
                     text=cr.text, prompt_tokens=total_p, completion_tokens=total_c,
                     spend_usd=total_spend, turns=turn, stopped="final",
@@ -207,8 +222,12 @@ class Loop:
                     args_obj = {}
                     sanitized = json.dumps({"error": "malformed args"})
                 else:
+                    tool_t0 = time.perf_counter()
                     raw = await self._mcp.call(tc["name"], args_obj)
                     sanitized = sanitize_tool_output(raw)
+                    if tracer is not None:
+                        tool_ms = (time.perf_counter() - tool_t0) * 1000.0
+                        tracer.timing("tool", tool_ms, name=tc["name"], turn=turn)
                 messages.append({
                     "role": "tool", "tool_call_id": tc["id"], "content": sanitized,
                 })
@@ -219,6 +238,11 @@ class Loop:
                 tier, max_turns = self._maybe_bump_tier(
                     tc["name"], sanitized, tier, max_turns,
                 )
+
+            if tracer is not None:
+                turn_ms = (time.perf_counter() - turn_t0) * 1000.0
+                tracer.timing("turn", turn_ms, turn=turn,
+                              tool_calls=len(cr.tool_calls))
 
         return LoopResult(
             text="(stopped at max turns; not enough context to finalize)",

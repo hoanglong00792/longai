@@ -21,8 +21,11 @@ class _ResultLike(Protocol):
     error: str | None
 
 
-def format_result(r: _ResultLike, *, model: str, trace_id: str) -> dict[str, Any]:
-    return {
+def format_result(
+    r: _ResultLike, *, model: str, trace_id: str,
+    latency_ms: float | None = None,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
         "result": r.text,
         "usage": {
             "input_tokens": r.prompt_tokens,
@@ -36,10 +39,16 @@ def format_result(r: _ResultLike, *, model: str, trace_id: str) -> dict[str, Any
         "trace_id": trace_id,
         "error": r.error,
     }
+    if latency_ms is not None:
+        out["latency_ms"] = round(float(latency_ms), 1)
+    return out
 
 
-def format_error(exc: BaseException, *, trace_id: str) -> dict[str, Any]:
-    return {
+def format_error(
+    exc: BaseException, *, trace_id: str,
+    latency_ms: float | None = None,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
         "result": f"Sorry — {exc}. Try again.",
         "usage": {"input_tokens": 0, "output_tokens": 0},
         "model": "",
@@ -50,3 +59,6 @@ def format_error(exc: BaseException, *, trace_id: str) -> dict[str, Any]:
         "trace_id": trace_id,
         "error": str(exc),
     }
+    if latency_ms is not None:
+        out["latency_ms"] = round(float(latency_ms), 1)
+    return out

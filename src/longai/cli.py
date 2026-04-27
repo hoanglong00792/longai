@@ -199,6 +199,7 @@ async def _run_async(args: argparse.Namespace) -> int:
     import time
     prompt = " ".join(args.prompt)
     started_ts = int(time.time())
+    started_perf = time.perf_counter()
     output_mode = _resolve_output_mode(args)
     try:
         cfg, p, mem, mcp, loop = await _build_stack(
@@ -208,7 +209,8 @@ async def _run_async(args: argparse.Namespace) -> int:
     except ConfigError as e:
         # No persistence/tracer yet — emit a minimal error envelope and bail.
         tmp = Tracer(args.trace_dir)
-        _emit(format_error(e, trace_id=tmp.run_id), output_mode)
+        elapsed_ms = (time.perf_counter() - started_perf) * 1000.0
+        _emit(format_error(e, trace_id=tmp.run_id, latency_ms=elapsed_ms), output_mode)
         return 1
 
     # Resolve trace_dir: CLI flag > LONGAI_TRACE_DIR env > config (already merged)
@@ -219,15 +221,20 @@ async def _run_async(args: argparse.Namespace) -> int:
         # ─ Fast path: known slash commands skip the agent loop entirely ─
         if fast_commands.is_fast_command(prompt):
             tracer.input(prompt)
+            fast_t0 = time.perf_counter()
             fr = await fast_commands.dispatch(prompt, mcp=mcp, persistence=p)
+            fast_ms = (time.perf_counter() - fast_t0) * 1000.0
+            tracer.timing("fast_command", fast_ms, prompt_prefix=prompt.split()[0])
             assert fr is not None  # is_fast_command was True
             text = sanitize_outbound(fr.text)
+            elapsed_ms = (time.perf_counter() - started_perf) * 1000.0
             envelope = {
                 "result": text,
                 "usage": {"input_tokens": 0, "output_tokens": 0},
                 "model": "", "tier": "fast", "turns": 0, "stopped": "final",
                 "spend_usd": 0.0, "trace_id": tracer.run_id,
                 "error": fr.error,
+                "latency_ms": round(elapsed_ms, 1),
             }
             tracer.output(envelope)
             _emit(envelope, output_mode)
@@ -241,7 +248,7 @@ async def _run_async(args: argparse.Namespace) -> int:
 
         # ─ Pre-LLM enrichment: fetch market data upfront if a symbol is referenced ─
         hints = router.classify(prompt)
-        ctx_block = await enrichment.enrich(hints, mcp)
+        ctx_block = await enrichment.enrich(hints, mcp, tracer=tracer)
         enriched_prompt = enrichment.attach(prompt, ctx_block)
 
         history = p.load_history(args.user_id, max_msgs=20, max_tokens=8000)
@@ -255,10 +262,18 @@ async def _run_async(args: argparse.Namespace) -> int:
         result = await loop.run(
             chat_id=args.user_id, system_prompt=sysprompt,
             user_message=enriched_prompt, history=history,
+            tracer=tracer,
         )
-        envelope = format_result(result, model=result.model_used, trace_id=tracer.run_id)
+        elapsed_ms = (time.perf_counter() - started_perf) * 1000.0
+        envelope = format_result(
+            result, model=result.model_used, trace_id=tracer.run_id,
+            latency_ms=elapsed_ms,
+        )
         envelope["result"] = sanitize_outbound(envelope["result"])  # I11
         tracer.output(envelope)
+        if tracer is not None:
+            tracer.timing("request.total", elapsed_ms, turns=result.turns,
+                          stopped=result.stopped)
         _emit(envelope, output_mode)
         # Persist message history + 1-row trace summary (always, even when --trace-dir unset)
         p.append_message(args.user_id, "user", prompt, tokens=result.prompt_tokens)

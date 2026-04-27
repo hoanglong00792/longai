@@ -67,6 +67,7 @@ class ChatResult:
     completion_tokens: int
     spend_usd: float
     model_used: str
+    latency_ms: float = 0.0  # wall-clock for the OpenRouter round trip
 
 
 class BudgetGuard:
@@ -163,11 +164,13 @@ class BudgetGuard:
         tools: list[dict] | None, tier: str = "M",
     ) -> ChatResult:
         wall_clock = self._caps.wall_clock_for(tier)
+        t0 = time.perf_counter()
         try:
             async with asyncio.timeout(wall_clock):
                 resp = await self._raw_call(model=model, messages=messages, tools=tools)
         except asyncio.TimeoutError as e:
             raise CallTimeout(f"call to {model} exceeded {wall_clock}s") from e
+        latency_ms = (time.perf_counter() - t0) * 1000.0
 
         # Compute cost from usage
         usage = resp.usage
@@ -197,6 +200,7 @@ class BudgetGuard:
             completion_tokens=c_tokens,
             spend_usd=cost,
             model_used=model,
+            latency_ms=latency_ms,
         )
 
     async def _raw_call(

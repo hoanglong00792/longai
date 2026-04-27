@@ -19,10 +19,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+from typing import TYPE_CHECKING
 
 from longai.mcp_client import MCPRegistry, UnknownTool
 from longai.prices import coingecko_simple_price, format_price_line
 from longai.router import RouteHints
+
+if TYPE_CHECKING:
+    from longai.trace import Tracer
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +138,26 @@ async def _fetch_url(url: str, mcp: MCPRegistry) -> str | None:
     return f"[{url}]\n{body}"
 
 
-async def enrich(hints: RouteHints, mcp: MCPRegistry) -> str | None:
+async def _timed(
+    coro, *, kind: str, tracer: "Tracer | None", **extra,
+) -> str | None:
+    """Wrap an enrichment coroutine to record its wall-clock to the tracer."""
+    t0 = time.perf_counter()
+    try:
+        result = await coro
+    finally:
+        if tracer is not None:
+            ms = (time.perf_counter() - t0) * 1000.0
+            tracer.timing(f"enrich.{kind}", ms, **extra)
+    return result
+
+
+async def enrich(
+    hints: RouteHints,
+    mcp: MCPRegistry,
+    *,
+    tracer: "Tracer | None" = None,
+) -> str | None:
     """Build a context block for the user message, or None if nothing to add.
 
     Runs all applicable enrichments concurrently. The block includes a
@@ -142,16 +166,27 @@ async def enrich(hints: RouteHints, mcp: MCPRegistry) -> str | None:
     """
     tasks: list = []
     if hints.symbol:
-        tasks.append(("market", _fetch_market(hints.symbol, mcp)))
+        tasks.append(("market", _timed(_fetch_market(hints.symbol, mcp),
+                                       kind="market", tracer=tracer,
+                                       symbol=hints.symbol)))
     if hints.contract:
-        tasks.append(("contract", _fetch_contract(hints.contract, hints.chain, mcp)))
+        tasks.append(("contract", _timed(
+            _fetch_contract(hints.contract, hints.chain, mcp),
+            kind="contract", tracer=tracer,
+            contract=hints.contract, chain=hints.chain,
+        )))
     for url in hints.urls[:_MAX_URLS]:
-        tasks.append(("url", _fetch_url(url, mcp)))
+        tasks.append(("url", _timed(_fetch_url(url, mcp),
+                                    kind="url", tracer=tracer, url=url)))
 
     if not tasks:
         return None
 
+    enrich_t0 = time.perf_counter()
     results = await asyncio.gather(*[t[1] for t in tasks], return_exceptions=True)
+    enrich_ms = (time.perf_counter() - enrich_t0) * 1000.0
+    if tracer is not None:
+        tracer.timing("enrich.total", enrich_ms, kinds=[k for k, _ in tasks])
 
     blocks: list[str] = []
     for (kind, _), result in zip(tasks, results):

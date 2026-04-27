@@ -109,7 +109,7 @@ mkdir -p "${OUT}/cases"
   echo "  TELEGRAM_BOT_TOKEN=<set: $([ -n "${TELEGRAM_BOT_TOKEN:-}" ] && echo yes || echo no)>"
 } > "${OUT}/00_meta.txt"
 
-echo -e "id\ttier\tstatus\tspend_usd\tmodel\tstopped\tturns\ttrace_dir\tassertion_failures" \
+echo -e "id\ttier\tstatus\tspend_usd\tmodel\tstopped\tturns\tlatency_ms\ttrace_dir\tassertion_failures" \
   > "${OUT}/01_summary.tsv"
 : > "${OUT}/02_envelopes.jsonl"
 
@@ -266,12 +266,13 @@ PY
   MODEL="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1] or "{}"); print(d.get("model",""))' "${ENVELOPE}" 2>/dev/null || echo "")"
   STOPPED="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1] or "{}"); print(d.get("stopped",""))' "${ENVELOPE}" 2>/dev/null || echo "")"
   TURNS="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1] or "{}"); print(d.get("turns",0))' "${ENVELOPE}" 2>/dev/null || echo 0)"
+  LATENCY_MS="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1] or "{}"); print(d.get("latency_ms",""))' "${ENVELOPE}" 2>/dev/null || echo "")"
 
-  echo -e "${ID}\t${CASE_TIER}\t${STATUS}\t${SPEND}\t${MODEL}\t${STOPPED}\t${TURNS}\t${CASE_TRACE}\t${ASSERTION_FAILS}" \
+  echo -e "${ID}\t${CASE_TIER}\t${STATUS}\t${SPEND}\t${MODEL}\t${STOPPED}\t${TURNS}\t${LATENCY_MS}\t${CASE_TRACE}\t${ASSERTION_FAILS}" \
     >> "${OUT}/01_summary.tsv"
 
-  printf "  status=%s spend=$%s model=%s stopped=%s turns=%s\n" \
-    "${STATUS}" "${SPEND}" "${MODEL}" "${STOPPED}" "${TURNS}"
+  printf "  status=%s spend=$%s model=%s stopped=%s turns=%s latency=%sms\n" \
+    "${STATUS}" "${SPEND}" "${MODEL}" "${STOPPED}" "${TURNS}" "${LATENCY_MS}"
   [ "${STATUS}" = "PASS" ] || echo "  fails: ${ASSERTION_FAILS}"
 
   # Throttle between cases to give OpenRouter free tier time to recover from

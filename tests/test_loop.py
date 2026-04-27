@@ -258,6 +258,47 @@ async def test_caps_tier_sets_per_tier_max_turns(fake_guard, fake_mcp):
 
 
 @pytest.mark.asyncio
+async def test_loop_emits_timing_events_when_tracer_provided(fake_guard, fake_mcp, tmp_path):
+    """Loop.run with a Tracer should write chat/tool/turn records."""
+    from longai.trace import Tracer
+    fake_guard.chat.side_effect = [
+        _result(tool_calls=[
+            {"id": "t1", "name": "echo", "arguments": '{"k":"v"}'}
+        ]),
+        _result(text="done"),
+    ]
+    fake_mcp.call.return_value = "ok"
+    tracer = Tracer(str(tmp_path))
+    loop = Loop(guard=fake_guard, mcp=fake_mcp, max_turns=5)
+    res = await loop.run(
+        chat_id=1, system_prompt="sys", user_message="hi",
+        history=[], tracer=tracer,
+    )
+    assert res.stopped == "final"
+    [run_dir] = list(tmp_path.iterdir())
+    timings_file = run_dir / "06_timings.jsonl"
+    assert timings_file.exists()
+    phases = [json.loads(l)["phase"] for l in timings_file.read_text().splitlines()]
+    # Expect: chat (turn 1), tool (turn 1), turn (turn 1), chat (turn 2), turn (turn 2)
+    assert "chat" in phases
+    assert "tool" in phases
+    assert "turn" in phases
+    # No chat without a tool — final turn should still record chat + turn
+    assert phases.count("chat") == 2  # two chat calls, two turns
+
+
+@pytest.mark.asyncio
+async def test_loop_without_tracer_runs_silently(fake_guard, fake_mcp):
+    """Backward compat — tracer is optional; loop runs identically without it."""
+    fake_guard.chat.return_value = _result(text="hi")
+    loop = Loop(guard=fake_guard, mcp=fake_mcp, max_turns=5)
+    res = await loop.run(
+        chat_id=1, system_prompt="sys", user_message="hello", history=[],
+    )
+    assert res.stopped == "final"
+
+
+@pytest.mark.asyncio
 async def test_sanitize_tool_output_runs_on_results(fake_guard, fake_mcp):
     """I11 — tool outputs are sanitized before going back into context."""
     fake_guard.chat.side_effect = [

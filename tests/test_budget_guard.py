@@ -66,6 +66,8 @@ async def test_happy_path_debits_and_returns(caps_tiny, persistence, monkeypatch
     assert res.spend_usd == pytest.approx(0.0002, rel=0.01)
     # Persistence debit happened
     assert persistence.spend_today(_today()) > 0
+    # Latency populated by _attempt_call timing wrap
+    assert res.latency_ms >= 0.0
 
 
 @pytest.mark.asyncio
