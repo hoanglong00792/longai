@@ -9,6 +9,13 @@
 #   ./scripts/live_replay.sh --tier 1                     # tier-1 smoke only
 #   ./scripts/live_replay.sh --prompts tests/e2e/foo.json --tier 2
 #   ./scripts/live_replay.sh --max-cases 3                # first 3 cases only
+#   ./scripts/live_replay.sh --throttle 10                # sleep 10s between cases
+#                                                          (recommended for full sweeps —
+#                                                           OpenRouter free tier rate-limits
+#                                                           around 20 req/min per model)
+#   ./scripts/live_replay.sh --reset-cooldowns            # clear cooldowns table first
+#                                                          (useful after a previous failed
+#                                                           run benched all models)
 #
 # Output:
 #   test-results/live_replay_<UTC-TS>/
@@ -51,13 +58,17 @@ PYBIN="${REPO_ROOT}/.venv/bin/python"
 
 PROMPTS="tests/e2e/test_prompts.json"
 TIER=0
-MAX_CASES=0  # 0 = unlimited
+MAX_CASES=0       # 0 = unlimited
+THROTTLE_S=0      # seconds to sleep between cases (recommended 5+ for full sweeps)
+RESET_COOLDOWNS=0 # if 1, clear the cooldowns table before running
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --prompts) PROMPTS="$2"; shift 2 ;;
     --tier) TIER="$2"; shift 2 ;;
     --max-cases) MAX_CASES="$2"; shift 2 ;;
+    --throttle) THROTTLE_S="$2"; shift 2 ;;
+    --reset-cooldowns) RESET_COOLDOWNS=1; shift ;;
     -h|--help)
       sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
       exit 0
@@ -97,6 +108,21 @@ mkdir -p "${OUT}/cases"
 echo -e "id\ttier\tstatus\tspend_usd\tmodel\tstopped\tturns\ttrace_dir\tassertion_failures" \
   > "${OUT}/01_summary.tsv"
 : > "${OUT}/02_envelopes.jsonl"
+
+# Optional: reset cooldowns so prior run's bench-pressed models recover immediately
+if [ "${RESET_COOLDOWNS}" = "1" ]; then
+    DB_PATH="${HOME}/.longai/state.db"
+    if [ -f "${DB_PATH}" ]; then
+        echo "==> Clearing cooldowns from ${DB_PATH}"
+        $ARCH_PREFIX "${PYBIN}" -c "
+import sqlite3
+c = sqlite3.connect('${DB_PATH}')
+deleted = c.execute('DELETE FROM cooldowns').rowcount
+c.commit()
+print(f'  cleared {deleted} cooldown row(s)')
+"
+    fi
+fi
 
 # Emit per-case TSV: id<TAB>tier<TAB>json(message)<TAB>json(expect)
 python3 - <<'PY' "${PROMPTS}" "${TIER}" "${MAX_CASES}" > "${OUT}/_cases.tsv"
@@ -205,6 +231,12 @@ PY
   printf "  status=%s spend=$%s model=%s stopped=%s turns=%s\n" \
     "${STATUS}" "${SPEND}" "${MODEL}" "${STOPPED}" "${TURNS}"
   [ "${STATUS}" = "PASS" ] || echo "  fails: ${ASSERTION_FAILS}"
+
+  # Throttle between cases to give OpenRouter free tier time to recover from
+  # rate-limit cooldowns. Recommended 5+ for full sweeps.
+  if [ "${THROTTLE_S}" -gt 0 ] && [ "${TOTAL}" -lt 999 ]; then
+      sleep "${THROTTLE_S}"
+  fi
 done < "${OUT}/_cases.tsv"
 
 rm -f "${OUT}/_cases.tsv"
