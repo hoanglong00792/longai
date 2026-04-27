@@ -29,7 +29,7 @@ Run these in order. **Do not skip steps.**
 
 ```bash
 cd ~/Documents/GitHub
-git clone <repo-url> longai
+git clone https://github.com/hoanglong00792/longai.git longai
 cd longai
 ```
 

@@ -36,7 +36,7 @@ brew install node        # for browser automation (recommended)
 ### 2. Clone and set up the venv
 
 ```bash
-git clone <repo-url> longai && cd longai
+git clone https://github.com/hoanglong00792/longai.git && cd longai
 bash scripts/setup_venv.sh     # creates .venv, installs deps (~30s)
 ```
 
