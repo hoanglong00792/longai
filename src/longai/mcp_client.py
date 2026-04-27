@@ -56,7 +56,8 @@ class MCPRegistry:
         config_path: str,
         allowlist: set[str] | None = None,
     ) -> None:
-        self._config_path = Path(config_path)
+        import os
+        self._config_path = Path(os.path.expanduser(config_path))
         self._allowlist = allowlist
         self._servers: list[_ServerEntry] = []
         # Background asyncio task running the anyio event loop work
@@ -71,7 +72,16 @@ class MCPRegistry:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """Connect to all configured servers. Degraded on per-server failure."""
+        """Connect to all configured servers. Degraded on per-server failure.
+
+        If config file is missing, runs with no servers (degraded mode).
+        """
+        if not self._config_path.exists():
+            logger.warning(
+                "MCP config not found at %s — running with no servers",
+                self._config_path,
+            )
+            return
         config = json.loads(self._config_path.read_text())
         servers_cfg: dict[str, Any] = config.get("mcpServers", {})
 
