@@ -46,6 +46,26 @@ Default tiers, when configured via `[models.tier_S/M/L]` in `config.toml`:
 Legacy single-chain configs (`models = [...]`) continue to work — they map all
 tiers to the same chain. See `config.example.toml` for the tiered schema.
 
+### Skill complexity & mid-loop tier escalation
+
+`SKILL.md` frontmatter accepts an optional `complexity: S | M | L` field
+(defaults to `M`). When the agent calls `load_skill` mid-conversation, the
+skill_loader MCP returns the complexity alongside the body, and the loop
+escalates tier upward (never downward) for the remaining turns. A skill
+declared `complexity: L` loaded on turn 2 of an M-tier run upgrades the rest
+of the run to L's chain and turn budget.
+
+```yaml
+---
+name: deep-research
+description: Multi-source synthesis, comparison, deep analysis.
+complexity: L
+---
+```
+
+Routing: classifier sets initial tier from the user message → load_skill may
+bump it up → `BudgetGuard.chat(tier=...)` picks the chain accordingly.
+
 ---
 
 ## Persistence

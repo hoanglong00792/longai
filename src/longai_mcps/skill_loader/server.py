@@ -73,8 +73,14 @@ def _parse_skill(skill_md: Path, label: str) -> dict[str, Any] | None:
     name = fields.get("name", skill_md.parent.name)
     desc = fields.get("description", "")
     access = fields.get("access", label)
+    # complexity: S | M | L (default M). Read by the agent loop to bump
+    # tier mid-conversation when a heavy skill is loaded.
+    complexity = fields.get("complexity", "").upper().strip()
+    if complexity not in ("S", "M", "L"):
+        complexity = "M"
     return {"name": name, "description": desc, "access": access,
-            "repo": label, "body": body.strip(), "path": str(skill_md)}
+            "repo": label, "complexity": complexity,
+            "body": body.strip(), "path": str(skill_md)}
 
 
 def _all_skills() -> list[dict[str, Any]]:
@@ -104,7 +110,8 @@ def _list_skills_impl(query: str | None, access: str | None) -> dict[str, Any]:
     return {
         "skills": [
             {"name": s["name"], "description": s["description"][:120],
-             "access": s["access"], "repo": s["repo"]}
+             "access": s["access"], "repo": s["repo"],
+             "complexity": s["complexity"]}
             for s in skills
         ],
     }
@@ -116,7 +123,8 @@ def _load_skill_impl(name: str) -> dict[str, Any]:
             body = s["body"]
             if len(body) > BODY_CAP:
                 body = body[:BODY_CAP] + f"\n\n[...skill body truncated, see file at {s['path']} for full text]"
-            return {"name": name, "body": body, "path": s["path"]}
+            return {"name": name, "body": body, "path": s["path"],
+                    "complexity": s["complexity"]}
     return {"error": f"skill not found: {name}"}
 
 

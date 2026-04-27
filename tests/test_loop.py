@@ -147,6 +147,95 @@ async def test_quick_prefix_is_stripped_before_llm(fake_guard, fake_mcp):
 
 
 @pytest.mark.asyncio
+async def test_load_skill_with_l_complexity_bumps_tier(fake_guard, fake_mcp):
+    """Loading a complexity:L skill mid-conversation upgrades the rest of the run."""
+    from longai.config import BudgetCaps
+    caps = BudgetCaps(
+        per_call_max_turns=3,
+        by_tier={"L": {"per_call_max_turns": 9}},
+    )
+    fake_guard.chat.side_effect = [
+        # Turn 1: load_skill call
+        _result(tool_calls=[
+            {"id": "t1", "name": "load_skill", "arguments": '{"name":"deep-research"}'}
+        ]),
+        # Turn 2: final
+        _result(text="done with deep research"),
+    ]
+    fake_mcp.call.return_value = json.dumps({
+        "name": "deep-research", "complexity": "L",
+        "body": "...", "path": "/x",
+    })
+    loop = Loop(guard=fake_guard, mcp=fake_mcp, caps=caps)
+    res = await loop.run(
+        chat_id=1, system_prompt="sys",
+        user_message="run the heavy skill", history=[], tier="M",
+    )
+    # Tier should have escalated from M (forced) to L (skill complexity)
+    assert res.tier == "L"
+    # First chat call: tier=M (initial)
+    assert fake_guard.chat.call_args_list[0].kwargs["tier"] == "M"
+    # Second chat call: tier=L (after the bump)
+    assert fake_guard.chat.call_args_list[1].kwargs["tier"] == "L"
+
+
+@pytest.mark.asyncio
+async def test_load_skill_with_lower_complexity_does_not_downgrade(fake_guard, fake_mcp):
+    """If we're already on L and load a complexity:S skill, stay on L."""
+    fake_guard.chat.side_effect = [
+        _result(tool_calls=[
+            {"id": "t1", "name": "load_skill", "arguments": '{"name":"trivial"}'}
+        ]),
+        _result(text="ok"),
+    ]
+    fake_mcp.call.return_value = json.dumps({
+        "name": "trivial", "complexity": "S", "body": "x", "path": "/x",
+    })
+    loop = Loop(guard=fake_guard, mcp=fake_mcp, max_turns=5)
+    res = await loop.run(
+        chat_id=1, system_prompt="sys", user_message="x", history=[], tier="L",
+    )
+    assert res.tier == "L"  # unchanged
+    assert fake_guard.chat.call_args_list[1].kwargs["tier"] == "L"
+
+
+@pytest.mark.asyncio
+async def test_non_load_skill_tool_does_not_bump(fake_guard, fake_mcp):
+    """Other tools that happen to return a `complexity` field don't trigger bumps."""
+    fake_guard.chat.side_effect = [
+        _result(tool_calls=[
+            {"id": "t1", "name": "calculate", "arguments": "{}"}
+        ]),
+        _result(text="42"),
+    ]
+    fake_mcp.call.return_value = json.dumps({"complexity": "L", "result": 42})
+    loop = Loop(guard=fake_guard, mcp=fake_mcp, max_turns=5)
+    res = await loop.run(
+        chat_id=1, system_prompt="sys", user_message="2+2", history=[], tier="M",
+    )
+    assert res.tier == "M"  # not bumped
+
+
+@pytest.mark.asyncio
+async def test_load_skill_with_invalid_complexity_does_not_bump(fake_guard, fake_mcp):
+    """Invalid complexity values are ignored — tier stays as-is."""
+    fake_guard.chat.side_effect = [
+        _result(tool_calls=[
+            {"id": "t1", "name": "load_skill", "arguments": '{"name":"weird"}'}
+        ]),
+        _result(text="ok"),
+    ]
+    fake_mcp.call.return_value = json.dumps({
+        "name": "weird", "complexity": "HUGE", "body": "x", "path": "/x",
+    })
+    loop = Loop(guard=fake_guard, mcp=fake_mcp, max_turns=5)
+    res = await loop.run(
+        chat_id=1, system_prompt="sys", user_message="x", history=[], tier="M",
+    )
+    assert res.tier == "M"
+
+
+@pytest.mark.asyncio
 async def test_caps_tier_sets_per_tier_max_turns(fake_guard, fake_mcp):
     """Loop with caps= reads turn limit per-tier from caps.turns_for()."""
     from longai.config import BudgetCaps

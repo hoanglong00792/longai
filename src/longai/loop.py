@@ -64,6 +64,34 @@ class Loop:
             return self._caps.turns_for(tier)
         return 5
 
+    # Tier ordering: S < M < L. Used by mid-loop complexity bumps so a
+    # heavy skill loaded on turn 2 escalates the rest of the run.
+    _TIER_ORDER = {"S": 0, "M": 1, "L": 2}
+
+    def _maybe_bump_tier(
+        self, tool_name: str, tool_result_json: str,
+        tier: str, max_turns: int,
+    ) -> tuple[str, int]:
+        """If *tool_name* is ``load_skill`` and the result declares a higher
+        complexity than *tier*, bump tier and extend *max_turns*. Never
+        downgrades. Silent on parse failures or invalid complexity values.
+        """
+        if tool_name != "load_skill":
+            return tier, max_turns
+        try:
+            data = json.loads(tool_result_json)
+        except (json.JSONDecodeError, TypeError):
+            return tier, max_turns
+        if not isinstance(data, dict):
+            return tier, max_turns
+        new_complexity = data.get("complexity")
+        if new_complexity not in self._TIER_ORDER:
+            return tier, max_turns
+        if self._TIER_ORDER[new_complexity] <= self._TIER_ORDER[tier]:
+            return tier, max_turns
+        new_max = max(max_turns, self._max_turns_for(new_complexity))
+        return new_complexity, new_max
+
     @staticmethod
     def _hash_call(name: str, args_str: str) -> str:
         try:
@@ -184,6 +212,13 @@ class Loop:
                 messages.append({
                     "role": "tool", "tool_call_id": tc["id"], "content": sanitized,
                 })
+                # Mid-loop tier escalation: when a heavy skill is loaded,
+                # upgrade tier (and extend turn budget) for the remaining
+                # iterations. Sanitize-then-bump order is intentional: we
+                # parse the same payload the LLM will see.
+                tier, max_turns = self._maybe_bump_tier(
+                    tc["name"], sanitized, tier, max_turns,
+                )
 
         return LoopResult(
             text="(stopped at max turns; not enough context to finalize)",
