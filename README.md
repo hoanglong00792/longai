@@ -18,8 +18,10 @@ uv pip install -e ".[dev]"
 # 2. Configure
 mkdir -p ~/.longai
 cp config.example.toml ~/.longai/config.toml
+cp mcp.example.json ~/.longai/mcp.json   # ships with Playwright MCP enabled
 # Edit ~/.longai/config.toml — set allowed_chat_ids
 # Set env: OPENROUTER_API_KEY, TELEGRAM_BOT_TOKEN
+# Playwright MCP requires Node.js + npx (one-time): https://nodejs.org
 
 # 3. Test it locally without Telegram
 longai dryrun                       # validate config + spawn MCPs

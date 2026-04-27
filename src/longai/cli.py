@@ -54,6 +54,13 @@ async def _build_stack(config_path: str, *, require_telegram: bool):
         # tradingview-mcp allowlist (5 tools)
         "get_technical_analysis", "get_candlestick_patterns",
         "market_snapshot", "financial_news", "market_sentiment",
+        # @playwright/mcp tools (Microsoft official, runs via `npx -y @playwright/mcp@latest`)
+        "browser_navigate", "browser_navigate_back", "browser_click", "browser_hover",
+        "browser_type", "browser_press_key", "browser_select_option", "browser_drag",
+        "browser_fill_form", "browser_file_upload", "browser_handle_dialog",
+        "browser_snapshot", "browser_take_screenshot", "browser_evaluate",
+        "browser_wait_for", "browser_console_messages", "browser_network_requests",
+        "browser_resize", "browser_tabs", "browser_close", "browser_run_code",
     }
     mcp = MCPRegistry(cfg.mcp_config_path, allowlist=allowlist)
     await mcp.start()
