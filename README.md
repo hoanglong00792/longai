@@ -81,6 +81,11 @@ Verify from anywhere:
 cd ~ && longai dryrun
 ```
 
+> **Secrets in a fresh terminal:** the wrapper auto-sources `~/.longai/env`
+> before launching, so global-CLI invocations pick up `OPENROUTER_API_KEY`
+> etc. without you having to export them in every shell. Copy the template:
+> `cp env.example ~/.longai/env && chmod 600 ~/.longai/env`, then edit.
+
 ---
 
 ## Adding optional capabilities

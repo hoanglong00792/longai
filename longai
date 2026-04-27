@@ -43,4 +43,17 @@ fi
 
 unset VIRTUAL_ENV   # avoid rtk-set 'myenv' or other stale pointers
 
+# Auto-load secrets from ~/.longai/env (dotenv-style KEY=VALUE file). Lets a
+# global CLI install pick up OPENROUTER_API_KEY, TELEGRAM_BOT_TOKEN, etc.
+# without forcing shell-rc edits in every terminal. Existing exports win —
+# `set -a` only auto-exports new assignments, it doesn't overwrite a value
+# that's already in the environment unless the file re-assigns it.
+ENV_FILE="${HOME}/.longai/env"
+if [ -f "${ENV_FILE}" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "${ENV_FILE}"
+    set +a
+fi
+
 exec $ARCH_PREFIX "${PYBIN}" -m longai "$@"

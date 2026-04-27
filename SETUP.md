@@ -78,6 +78,18 @@ If any prerequisite fails, the script aborts with a clear message.
 
 ### 5. Set environment variables
 
+The `longai` wrapper auto-sources `~/.longai/env` before launching. Put your
+secrets there once and every shell — global CLI install included — picks them
+up without rc-file edits:
+
+```bash
+cp env.example ~/.longai/env
+chmod 600 ~/.longai/env
+$EDITOR ~/.longai/env       # set OPENROUTER_API_KEY, etc.
+```
+
+Or export them in your shell the old way:
+
 ```bash
 # Required
 export OPENROUTER_API_KEY=sk-or-v1-...     # get at https://openrouter.ai
@@ -91,7 +103,8 @@ export TAVILY_API_KEYS=tvly-...,tvly-...    # comma-separated for rotation; get 
 export ETHERSCAN_API_KEY=...                # for the etherscan_get_abi tool
 ```
 
-For persistence, add these to `~/.zshrc` or use a `.env` file (see `.env.example`).
+`~/.longai/env` is recommended for global CLI installs — shell-exported vars
+don't follow you into a fresh terminal, but the wrapper-sourced file does.
 
 > **Why TAVILY_API_KEYS is recommended:** the bot defaults to Playwright for any
 > web research, which is slow (~10-30s per query). Tavily returns a synthesized
@@ -182,8 +195,20 @@ Or check that `npx` is on PATH: `which npx`.
 Run `bash scripts/init_mcp.sh`.
 
 ### "OPENROUTER_API_KEY not set — exiting"
-You haven't set the env var. See step 5 above. The bot panics at boot if missing —
-this is intentional (per I3, no key = no bot).
+The bot panics at boot if missing — intentional (per I3, no key = no bot).
+Three ways to fix:
+
+1. **Recommended for global CLI:** put it in `~/.longai/env` (the wrapper auto-sources):
+   ```bash
+   cp env.example ~/.longai/env && chmod 600 ~/.longai/env
+   $EDITOR ~/.longai/env  # set OPENROUTER_API_KEY=sk-or-v1-...
+   ```
+2. Export it in your shell rc (`~/.zshrc` / `~/.bashrc`).
+3. Store the key in a permissioned file and point `OPENROUTER_API_KEY_FILE` at it:
+   ```bash
+   echo "sk-or-v1-..." > ~/.longai/openrouter.key && chmod 600 ~/.longai/openrouter.key
+   echo 'export OPENROUTER_API_KEY_FILE=~/.longai/openrouter.key' >> ~/.zshrc
+   ```
 
 ### "Daily budget reached"
 You've hit the I4 cap of $1.00/day global or $0.25/user/day. Resets at UTC midnight.
