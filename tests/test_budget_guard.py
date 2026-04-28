@@ -207,6 +207,321 @@ async def test_wall_clock_uses_tier_override(caps_tiny, persistence, monkeypatch
     assert caps_tiny.wall_clock_for("M") == 5  # default from caps_tiny
 
 
+@pytest.mark.asyncio
+async def test_chat_attempt_traces_every_chain_step(
+    caps_tiny, persistence, monkeypatch, tmp_path,
+):
+    """Silent fallback regression guard: when chain falls A→B, both attempts
+    must be emitted as chat.attempt records and persisted to model_stats."""
+    from longai.trace import Tracer
+    from openai import RateLimitError
+
+    g = BudgetGuard(
+        api_key="sk", base_url="x", models=["m1", "m2"],
+        caps=caps_tiny, persistence=persistence,
+        prices={"m1": (0, 0), "m2": (0, 0)},
+    )
+    # m1 fails with RateLimitError, m2 succeeds.
+    rate_limit = RateLimitError(
+        message="429", response=MagicMock(status_code=429),
+        body={"error": "rate limited"},
+    )
+    fake = AsyncMock(side_effect=[rate_limit, _mk_response("ok", model="m2")])
+    monkeypatch.setattr(g, "_raw_call", fake)
+
+    tracer = Tracer(str(tmp_path))
+    res = await g.chat(
+        chat_id=1, messages=[{"role": "user", "content": "x"}],
+        tools=None, tracer=tracer,
+    )
+    assert res.model_used == "m2"
+
+    # Trace file: exactly 2 chat.attempt rows in order m1(fail), m2(success).
+    import json
+    [timings_file] = list(tmp_path.rglob("06_timings.jsonl"))
+    rows = [
+        json.loads(line) for line in timings_file.read_text().splitlines()
+    ]
+    attempts = [r for r in rows if r["phase"] == "chat.attempt"]
+    assert len(attempts) == 2
+    assert attempts[0]["model"] == "m1"
+    assert attempts[0]["outcome"] == "rate_limit"
+    assert attempts[0]["attempt_idx"] == 0
+    assert attempts[1]["model"] == "m2"
+    assert attempts[1]["outcome"] == "success"
+    assert attempts[1]["attempt_idx"] == 1
+
+    # model_stats persisted.
+    stats = {
+        row["model"]: dict(row) for row in persistence._conn.execute(
+            "SELECT * FROM model_stats"
+        )
+    }
+    assert stats["m1"]["n_error"] == 1 and stats["m1"]["n_success"] == 0
+    assert stats["m2"]["n_success"] == 1 and stats["m2"]["n_error"] == 0
+    assert stats["m2"]["ewma_latency_ms"] is not None
+
+
+# ── Phase 2: B1 + B2 + B3 ──────────────────────────────────────────────
+
+
+def test_soft_timeout_full_for_last_capped_for_others():
+    from longai.budget_guard import _soft_timeout
+    # Tail entry keeps full budget regardless of EWMA
+    assert _soft_timeout(30.0, is_last=True) == 30.0
+    assert _soft_timeout(30.0, is_last=True, ewma_ms=1000.0) == 30.0
+    # Cold model (no EWMA): wall/2, floored at 8s, clamped to wall_clock
+    assert _soft_timeout(30.0, is_last=False) == 15.0
+    assert _soft_timeout(15.0, is_last=False) == 8.0
+    # When wall_clock < floor, wall_clock wins (can't exceed per-call budget)
+    assert _soft_timeout(5.0, is_last=False) == 5.0
+    # Known fast model (5s EWMA): 3× = 15s soft timeout
+    assert _soft_timeout(30.0, is_last=False, ewma_ms=5000.0) == 15.0
+    # Known slow-ish model (10s EWMA): 3× = 30s, clamped to wall_clock
+    assert _soft_timeout(30.0, is_last=False, ewma_ms=10000.0) == 30.0
+    # Very fast model still gets the floor
+    assert _soft_timeout(30.0, is_last=False, ewma_ms=500.0) == 8.0
+    # ewma_ms=0 / None / negative all treated as cold
+    assert _soft_timeout(30.0, is_last=False, ewma_ms=0) == 15.0
+    assert _soft_timeout(30.0, is_last=False, ewma_ms=None) == 15.0
+
+
+def test_cooldown_seconds_per_error_class_with_backoff():
+    from longai.budget_guard import _cooldown_seconds
+    # rate_limit: 60 → 300 → 600 (clamped at last)
+    assert _cooldown_seconds("rate_limit", 1) == 60
+    assert _cooldown_seconds("rate_limit", 2) == 300
+    assert _cooldown_seconds("rate_limit", 3) == 600
+    assert _cooldown_seconds("rate_limit", 99) == 600
+    # timeout & conn_err: 15 → 30 → 60 — much shorter
+    assert _cooldown_seconds("timeout", 1) == 15
+    assert _cooldown_seconds("conn_err", 1) == 15
+    # server_err: middle severity
+    assert _cooldown_seconds("server_err", 1) == 30
+    # unknown class → "other" schedule
+    assert _cooldown_seconds("weirdo", 1) == 60
+    # consecutive_failures=0 (shouldn't happen post-failure but be safe)
+    assert _cooldown_seconds("rate_limit", 0) == 60
+
+
+def test_score_model_cold_start_keeps_config_order():
+    from longai.budget_guard import _score_model, _COLD_START_DEFAULT_SCORE
+    # Cold model: score = default, tiebreak by original_idx
+    assert _score_model(None, 0) == (_COLD_START_DEFAULT_SCORE, 0)
+    assert _score_model(None, 5) == (_COLD_START_DEFAULT_SCORE, 5)
+    # Below MIN_SAMPLES → still cold
+    stats_thin = {"n_success": 1, "n_error": 1, "ewma_latency_ms": 100.0}
+    assert _score_model(stats_thin, 2) == (_COLD_START_DEFAULT_SCORE, 2)
+
+
+def test_score_model_promotes_proven_good_demotes_proven_bad():
+    from longai.budget_guard import _score_model, _COLD_START_DEFAULT_SCORE
+    proven_good = {"n_success": 10, "n_error": 0, "ewma_latency_ms": 5000.0}
+    proven_bad = {"n_success": 1, "n_error": 9, "ewma_latency_ms": 25000.0}
+    score_good = _score_model(proven_good, 5)[0]
+    score_bad = _score_model(proven_bad, 0)[0]
+    score_cold = _score_model(None, 2)[0]
+    # proven_good: 0 * 100 + 5000/1000 = 5
+    assert score_good == pytest.approx(5.0)
+    # proven_bad: 0.9 * 100 + 25000/1000 = 115
+    assert score_bad == pytest.approx(115.0)
+    # ordering: good < cold < bad
+    assert score_good < score_cold < score_bad
+
+
+@pytest.mark.asyncio
+async def test_chain_reordering_promotes_proven_good_model(
+    caps_tiny, persistence, monkeypatch,
+):
+    """Config order: bad, good. Stats show 'bad' fails 100% and 'good' is
+    fast+reliable. Reorder should put 'good' first."""
+    # Seed stats: 'bad' = 5 rate_limits, 'good' = 5 successes @ 2000ms
+    for _ in range(5):
+        persistence.record_attempt(model="bad", outcome="rate_limit",
+                                   latency_ms=1.0, now_ts=1)
+        persistence.record_attempt(model="good", outcome="success",
+                                   latency_ms=2000.0, now_ts=2)
+    g = BudgetGuard(
+        api_key="sk", base_url="x", models=["bad", "good"],
+        caps=caps_tiny, persistence=persistence,
+        prices={"bad": (0, 0), "good": (0, 0)},
+    )
+    monkeypatch.setattr(
+        g, "_raw_call", AsyncMock(return_value=_mk_response("ok", model="good")),
+    )
+    res = await g.chat(chat_id=1, messages=[{"role": "user", "content": "x"}],
+                       tools=None)
+    assert res.model_used == "good"
+    # 'bad' should never have been called — only 1 attempt for 'good'
+    assert g._raw_call.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_paid_fallback_never_promoted_above_free(
+    caps_tiny, persistence, monkeypatch,
+):
+    """Even if paid/floor has a great record and free 'm1' is bad,
+    the paid floor stays last (cost discipline)."""
+    persistence.record_attempt(model="paid", outcome="success",
+                               latency_ms=500.0, now_ts=1)
+    persistence.record_attempt(model="paid", outcome="success",
+                               latency_ms=500.0, now_ts=2)
+    persistence.record_attempt(model="paid", outcome="success",
+                               latency_ms=500.0, now_ts=3)
+    # m1 has 3 rate limits — score 100+
+    for _ in range(3):
+        persistence.record_attempt(model="m1", outcome="rate_limit",
+                                   latency_ms=1.0, now_ts=4)
+    g = BudgetGuard(
+        api_key="sk", base_url="x",
+        model_chains={"S": ["m1"], "M": ["m1"], "L": ["m1"], "fallback": ["paid"]},
+        caps=caps_tiny, persistence=persistence,
+        prices={"m1": (0, 0), "paid": (0, 0)},
+    )
+    chain = g._chain_for("M", reorder_by_health=True)
+    # Even though m1 is proven-bad, it stays in primary; paid stays at tail.
+    assert chain == ["m1", "paid"]
+
+
+@pytest.mark.asyncio
+async def test_b3_cooldown_uses_per_error_class_duration(
+    caps_tiny, persistence, monkeypatch,
+):
+    """First rate_limit failure should cool the model for 60s
+    (not the old flat 300s), and conn_err for 15s."""
+    from openai import APIConnectionError, RateLimitError
+    g = BudgetGuard(
+        api_key="sk", base_url="x", models=["m1", "m2"],
+        caps=caps_tiny, persistence=persistence,
+        prices={"m1": (0, 0), "m2": (0, 0)},
+    )
+    # m1 rate-limits, m2 succeeds.
+    rate_limit = RateLimitError(
+        message="429", response=MagicMock(status_code=429),
+        body={"error": "x"},
+    )
+    monkeypatch.setattr(
+        g, "_raw_call",
+        AsyncMock(side_effect=[rate_limit, _mk_response("ok", model="m2")]),
+    )
+    captured: dict = {}
+    real_set = persistence.set_cooldown
+    def spy(model, *, until_ts):
+        captured.setdefault(model, until_ts)
+        return real_set(model, until_ts=until_ts)
+    monkeypatch.setattr(persistence, "set_cooldown", spy)
+    t_before = int(__import__("time").time())
+    await g.chat(chat_id=1, messages=[{"role": "user", "content": "x"}], tools=None)
+    # m1 cooled ~60s into the future (rate_limit, 1st consecutive failure)
+    cooldown_s = captured["m1"] - t_before
+    assert 55 <= cooldown_s <= 65
+
+
+# ── Phase C4: streaming ─────────────────────────────────────────────────
+
+
+def _mk_stream_chunk(*, content: str | None = None,
+                      tool_calls: list[dict] | None = None,
+                      usage: tuple[int, int] | None = None):
+    """Build an async iterator of fake OpenAI streaming-shape chunks."""
+    chunk = MagicMock()
+    if usage is not None:
+        chunk.usage = MagicMock(prompt_tokens=usage[0], completion_tokens=usage[1])
+    else:
+        chunk.usage = None
+    if content is None and not tool_calls:
+        chunk.choices = []
+    else:
+        delta = MagicMock()
+        delta.content = content
+        if tool_calls:
+            built = []
+            for tc in tool_calls:
+                tcd = MagicMock()
+                tcd.index = tc["index"]
+                tcd.id = tc.get("id")
+                if "name" in tc or "arguments" in tc:
+                    fn = MagicMock()
+                    fn.name = tc.get("name")
+                    fn.arguments = tc.get("arguments")
+                    tcd.function = fn
+                else:
+                    tcd.function = None
+                built.append(tcd)
+            delta.tool_calls = built
+        else:
+            delta.tool_calls = None
+        choice = MagicMock(); choice.delta = delta
+        chunk.choices = [choice]
+    return chunk
+
+
+@pytest.mark.asyncio
+async def test_streaming_invokes_on_chunk_per_text_delta(
+    caps_tiny, persistence, monkeypatch,
+):
+    """on_chunk callback fires for each text delta; final ChatResult has
+    accumulated text and proper token counts."""
+    g = BudgetGuard(
+        api_key="sk", base_url="x", models=["m1"],
+        caps=caps_tiny, persistence=persistence, prices={"m1": (0, 0)},
+    )
+
+    async def fake_stream():
+        yield _mk_stream_chunk(content="Hello ")
+        yield _mk_stream_chunk(content="world!")
+        yield _mk_stream_chunk(usage=(100, 20))
+
+    async def fake_create(**kwargs):
+        assert kwargs["stream"] is True
+        return fake_stream()
+
+    monkeypatch.setattr(g._client.chat.completions, "create", fake_create)
+    chunks: list[str] = []
+    res = await g.chat(
+        chat_id=1, messages=[{"role": "user", "content": "x"}],
+        tools=None, on_chunk=chunks.append,
+    )
+    assert chunks == ["Hello ", "world!"]
+    assert res.text == "Hello world!"
+    assert res.tool_calls is None
+    assert res.prompt_tokens == 100
+    assert res.completion_tokens == 20
+
+
+@pytest.mark.asyncio
+async def test_streaming_accumulates_tool_call_arguments_across_chunks(
+    caps_tiny, persistence, monkeypatch,
+):
+    """Tool-call args stream as fragments; we must concatenate by index."""
+    g = BudgetGuard(
+        api_key="sk", base_url="x", models=["m1"],
+        caps=caps_tiny, persistence=persistence, prices={"m1": (0, 0)},
+    )
+
+    async def fake_stream():
+        yield _mk_stream_chunk(tool_calls=[
+            {"index": 0, "id": "call_1", "name": "calculate", "arguments": '{"exp'},
+        ])
+        yield _mk_stream_chunk(tool_calls=[
+            {"index": 0, "arguments": 'r":"2+2"}'},
+        ])
+        yield _mk_stream_chunk(usage=(50, 10))
+
+    async def fake_create(**kwargs):
+        return fake_stream()
+
+    monkeypatch.setattr(g._client.chat.completions, "create", fake_create)
+    res = await g.chat(
+        chat_id=1, messages=[{"role": "user", "content": "x"}],
+        tools=[{"type": "function", "function": {"name": "calculate"}}],
+        on_chunk=lambda c: None,
+    )
+    assert res.tool_calls == [{
+        "id": "call_1", "name": "calculate", "arguments": '{"expr":"2+2"}',
+    }]
+
+
 def test_budget_guard_requires_chains_or_models(caps_tiny, persistence):
     with pytest.raises(ValueError, match="model_chains"):
         BudgetGuard(

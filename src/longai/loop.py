@@ -7,11 +7,12 @@ Patterns:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from longai.trace import Tracer
@@ -114,6 +115,7 @@ class Loop:
         history: list[dict[str, Any]],
         tier: str | None = None,
         tracer: "Tracer | None" = None,
+        on_chunk: Callable[[str], None] | None = None,
     ) -> LoopResult:
         # Classify if no explicit tier given. The classifier may also strip
         # /deep // /quick prefix noise from the message before forwarding.
@@ -139,6 +141,7 @@ class Loop:
                 cr = await self._g.chat(
                     chat_id=chat_id, messages=messages,
                     tools=self._mcp.tools() or None, tier=tier,
+                    tracer=tracer, on_chunk=on_chunk,
                 )
             except BudgetExceeded as e:
                 return LoopResult(
@@ -214,20 +217,28 @@ class Loop:
                         error=f"stuck on {tc['name']}",
                     )
 
-            # Dispatch each tool call; sanitize results before appending
-            for tc in cr.tool_calls:
+            # D1: dispatch all tool calls in parallel via asyncio.gather.
+            # OpenAI tool_calls in a single turn are independent by spec, so
+            # serializing them is pure latency waste when the model emits ≥2.
+            # Order-preservation matters for messages append — gather returns
+            # results in the same order as the input coroutines.
+            async def _dispatch_one(tc: dict) -> tuple[dict, str]:
                 try:
                     args_obj = json.loads(tc.get("arguments") or "{}")
                 except json.JSONDecodeError:
-                    args_obj = {}
-                    sanitized = json.dumps({"error": "malformed args"})
-                else:
-                    tool_t0 = time.perf_counter()
-                    raw = await self._mcp.call(tc["name"], args_obj)
-                    sanitized = sanitize_tool_output(raw)
-                    if tracer is not None:
-                        tool_ms = (time.perf_counter() - tool_t0) * 1000.0
-                        tracer.timing("tool", tool_ms, name=tc["name"], turn=turn)
+                    return tc, json.dumps({"error": "malformed args"})
+                tool_t0 = time.perf_counter()
+                raw = await self._mcp.call(tc["name"], args_obj)
+                sanitized = sanitize_tool_output(raw)
+                if tracer is not None:
+                    tool_ms = (time.perf_counter() - tool_t0) * 1000.0
+                    tracer.timing("tool", tool_ms, name=tc["name"], turn=turn)
+                return tc, sanitized
+
+            results = await asyncio.gather(
+                *[_dispatch_one(tc) for tc in cr.tool_calls]
+            )
+            for tc, sanitized in results:
                 messages.append({
                     "role": "tool", "tool_call_id": tc["id"], "content": sanitized,
                 })

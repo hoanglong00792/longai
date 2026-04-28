@@ -52,16 +52,30 @@ class Memory:
         base_prompt: str,
         safety_block: str,
         skill_catalog: str,
+        tier: str | None = None,
     ) -> str:
+        # Tier-S messages are smoke / greeting / single-tool. They don't need
+        # the skill catalog (~500 tokens) or prefs (~200 tokens) — adding
+        # them just inflates TTFT on free models. Anything that legitimately
+        # needs skills should be classified M or L (or use /deep).
+        if tier == "S":
+            return "\n\n".join([base_prompt, "## Safety", safety_block])
         prefs = self.load_preferences(chat_id=chat_id)
         sections = [base_prompt, "## Safety", safety_block]
         if prefs:
             sections.extend(["## What you remember about this user/group", prefs])
+        # Phase 6: skill_catalog is now a *matched* subset (or empty). The
+        # trailing hint is always present so the model can self-discover
+        # skills when nothing was pre-matched.
         if skill_catalog:
             sections.extend([
-                "## Skills available (call load_skill(name) for body)",
+                "## Skills relevant to this request (call load_skill(name) for body)",
                 skill_catalog,
-                "## Memory available",
-                "Call recall_memory(query) for domain knowledge beyond preferences.",
             ])
+        sections.append(
+            "## Skills & memory discovery\n"
+            "If you need a specialized capability not listed above, call "
+            "list_skills(query=keyword) to discover, then load_skill(name) "
+            "to load. Call recall_memory(query) for domain knowledge."
+        )
         return "\n\n".join(sections)

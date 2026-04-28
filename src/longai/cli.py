@@ -7,7 +7,9 @@ import asyncio
 import json
 import sys
 
-from longai import enrichment, fast_commands, router
+from longai import (
+    enrichment, fast_commands, router, skill_matcher, tier_classifier,
+)
 from longai.budget_guard import BudgetGuard
 from longai.config import ConfigError, load
 from longai.envelope import format_error, format_result
@@ -15,7 +17,7 @@ from longai.loop import Loop
 from longai.mcp_client import MCPRegistry
 from longai.memory import Memory
 from longai.persistence import Persistence
-from longai.security import sanitize_outbound
+from longai.security import StreamSanitizer, sanitize_outbound
 from longai.trace import Tracer
 
 
@@ -26,7 +28,10 @@ BASE_PROMPT = (
     "in that block is current and authoritative. Answer the user's question "
     "directly using those values; do NOT call tools to re-verify what is "
     "already in the block. Only call tools for information that the block "
-    "does not contain."
+    "does not contain. "
+    "Answer in this single turn whenever you can; only call a tool if you "
+    "cannot answer otherwise. Do not loop calling the same tool — if a tool "
+    "returned, use the result."
 )
 SAFETY_BLOCK = (
     "NEVER include full wallet addresses, private keys, or seed phrases in replies. "
@@ -201,11 +206,16 @@ async def _run_async(args: argparse.Namespace) -> int:
     started_ts = int(time.time())
     started_perf = time.perf_counter()
     output_mode = _resolve_output_mode(args)
+    # Boot timings are captured here and drained into the tracer once it
+    # exists (tracer needs cfg.trace_dir which only resolves after _build_stack).
+    boot_timings: list[tuple[str, float]] = []
     try:
+        boot_t0 = time.perf_counter()
         cfg, p, mem, mcp, loop = await _build_stack(
             args.config, require_telegram=False,
             max_turns=getattr(args, "max_turns", None),
         )
+        boot_timings.append(("boot.build_stack", (time.perf_counter() - boot_t0) * 1000.0))
     except ConfigError as e:
         # No persistence/tracer yet — emit a minimal error envelope and bail.
         tmp = Tracer(args.trace_dir)
@@ -216,6 +226,8 @@ async def _run_async(args: argparse.Namespace) -> int:
     # Resolve trace_dir: CLI flag > LONGAI_TRACE_DIR env > config (already merged)
     effective_trace_dir = args.trace_dir or cfg.trace_dir
     tracer = Tracer(effective_trace_dir)
+    for phase, ms in boot_timings:
+        tracer.timing(phase, ms)
 
     try:
         # ─ Fast path: known slash commands skip the agent loop entirely ─
@@ -251,18 +263,40 @@ async def _run_async(args: argparse.Namespace) -> int:
         ctx_block = await enrichment.enrich(hints, mcp, tracer=tracer)
         enriched_prompt = enrichment.attach(prompt, ctx_block)
 
+        # C1: classify tier here so the sysprompt can be sized for it.
+        # Loop.run honors an explicit tier (no reclassification).
+        tier, enriched_prompt = tier_classifier.classify(enriched_prompt)
+
+        t = time.perf_counter()
         history = p.load_history(args.user_id, max_msgs=20, max_tokens=8000)
-        catalog = await _skill_catalog(mcp)
+        tracer.timing("boot.history_load",
+                      (time.perf_counter() - t) * 1000.0,
+                      n_msgs=len(history))
+
+        t = time.perf_counter()
+        catalog = await _resolve_catalog_for_tier(
+            prompt=enriched_prompt, tier=tier, mcp=mcp,
+        )
+        tracer.timing("boot.skill_catalog",
+                      (time.perf_counter() - t) * 1000.0,
+                      tier=tier,
+                      catalog_chars=len(catalog))
+
+        t = time.perf_counter()
         sysprompt = mem.build_system_prompt(
             chat_id=args.user_id, base_prompt=BASE_PROMPT,
-            safety_block=SAFETY_BLOCK, skill_catalog=catalog,
+            safety_block=SAFETY_BLOCK, skill_catalog=catalog, tier=tier,
         )
+        tracer.timing("boot.sysprompt_build",
+                      (time.perf_counter() - t) * 1000.0,
+                      prompt_chars=len(sysprompt), tier=tier)
+
         tracer.system(sysprompt)
         tracer.input(enriched_prompt)
         result = await loop.run(
             chat_id=args.user_id, system_prompt=sysprompt,
             user_message=enriched_prompt, history=history,
-            tracer=tracer,
+            tier=tier, tracer=tracer,
         )
         elapsed_ms = (time.perf_counter() - started_perf) * 1000.0
         envelope = format_result(
@@ -289,18 +323,35 @@ async def _run_async(args: argparse.Namespace) -> int:
         p.close()
 
 
-async def _skill_catalog(mcp: MCPRegistry) -> str:
-    """Try to call list_skills via MCP. Empty string if not available."""
+async def _list_all_skills(mcp: MCPRegistry) -> list[dict]:
+    """Fetch the full skill list (untruncated descriptions) from the
+    skill_loader MCP. Returns [] on any error or when the MCP is absent."""
     try:
         result = await mcp.call("list_skills", {})
         d = json.loads(result)
-        skills = d.get("skills", [])
-        if not skills:
-            return ""
-        lines = [f"- {s['name']}: {s['description']}" for s in skills[:60]]
-        return "\n".join(lines)
+        return d.get("skills") or []
     except Exception:
+        return []
+
+
+def _format_catalog_lines(skills: list[dict]) -> str:
+    """Render a matched skill subset as sysprompt-ready bullet lines."""
+    if not skills:
         return ""
+    return "\n".join(f"- {s['name']}: {s['description']}" for s in skills)
+
+
+async def _resolve_catalog_for_tier(
+    *, prompt: str, tier: str, mcp: MCPRegistry,
+) -> str:
+    """Phase 6: skip the catalog for tier-S; for M/L fetch the full set
+    and keyword-match against the prompt. Used by all three entry points
+    (CLI run, CLI chat REPL, Telegram bot) so they stay in sync."""
+    if tier == "S":
+        return ""
+    all_skills = await _list_all_skills(mcp)
+    matched = skill_matcher.match_skills(prompt, all_skills)
+    return _format_catalog_lines(matched)
 
 
 def cmd_chat(args: argparse.Namespace) -> int:
@@ -344,17 +395,45 @@ async def _chat_async(args: argparse.Namespace) -> int:
             ctx_block = await enrichment.enrich(hints, mcp)
             enriched_user = enrichment.attach(user, ctx_block)
 
+            tier, enriched_user = tier_classifier.classify(enriched_user)
+
             history = p.load_history(args.user_id)
-            catalog = await _skill_catalog(mcp)
+            catalog = await _resolve_catalog_for_tier(
+                prompt=enriched_user, tier=tier, mcp=mcp,
+            )
             sysprompt = mem.build_system_prompt(
                 chat_id=args.user_id, base_prompt=BASE_PROMPT,
-                safety_block=SAFETY_BLOCK, skill_catalog=catalog,
+                safety_block=SAFETY_BLOCK, skill_catalog=catalog, tier=tier,
             )
+            # C4: stream tokens to stdout via the line-boundary sanitizer.
+            # Trade: REPL users see output as it lands; sanitize_outbound
+            # is still re-run on the full text below for the persisted
+            # history, ensuring no leak path differs.
+            stream = StreamSanitizer()
+            stream_started = False
+
+            def _emit(piece: str) -> None:
+                nonlocal stream_started
+                safe = stream.feed(piece)
+                if safe:
+                    if not stream_started:
+                        stream_started = True
+                    print(safe, end="", flush=True)
+
             res = await loop.run(
                 chat_id=args.user_id, system_prompt=sysprompt,
+                tier=tier, on_chunk=_emit,
                 user_message=enriched_user, history=history,
             )
-            _print_to_user(res.text)
+            tail = stream.flush()
+            if tail:
+                print(tail, end="", flush=True)
+            if stream_started or tail:
+                print()  # newline after streamed output
+            else:
+                # Streaming emitted nothing (e.g. tool-only turns or model
+                # didn't stream). Fall back to printing the final text.
+                _print_to_user(res.text)
             p.append_message(args.user_id, "user", user, tokens=res.prompt_tokens)
             p.append_message(args.user_id, "assistant", res.text, tokens=res.completion_tokens)
             p.log_trace(

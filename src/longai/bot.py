@@ -21,7 +21,10 @@ from telegram.ext import (
 )
 
 from longai import enrichment, fast_commands, router
-from longai.cli import BASE_PROMPT, SAFETY_BLOCK, _build_stack, _skill_catalog
+from longai import tier_classifier
+from longai.cli import (
+    BASE_PROMPT, SAFETY_BLOCK, _build_stack, _resolve_catalog_for_tier,
+)
 from longai.config import load
 from longai.security import sanitize_outbound
 
@@ -82,15 +85,19 @@ async def _run_bot_async(args: argparse.Namespace) -> None:
         ctx_block = await enrichment.enrich(hints, mcp)
         enriched_user = enrichment.attach(user, ctx_block)
 
+        tier, enriched_user = tier_classifier.classify(enriched_user)
+
         history = p.load_history(chat_id)
-        catalog = await _skill_catalog(mcp)
+        catalog = await _resolve_catalog_for_tier(
+            prompt=enriched_user, tier=tier, mcp=mcp,
+        )
         sysprompt = mem.build_system_prompt(
             chat_id=chat_id, base_prompt=BASE_PROMPT,
-            safety_block=SAFETY_BLOCK, skill_catalog=catalog,
+            safety_block=SAFETY_BLOCK, skill_catalog=catalog, tier=tier,
         )
         res = await loop.run(
             chat_id=chat_id, system_prompt=sysprompt,
-            user_message=enriched_user, history=history,
+            user_message=enriched_user, history=history, tier=tier,
         )
         reply = _sanitize_reply(res.text)
         await msg.reply_text(reply)

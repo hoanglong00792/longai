@@ -48,3 +48,6 @@ myenv/
 docs/
 plan.md
 *.local.*
+
+# Scratch / planning docs (working notes, not for git):
+LATENCY_PHASES.md

@@ -80,7 +80,21 @@ CREATE TABLE IF NOT EXISTS traces (
     turns INTEGER NOT NULL DEFAULT 0,
     error TEXT
 );
+
+CREATE TABLE IF NOT EXISTS model_stats (
+    model TEXT PRIMARY KEY,
+    n_success INTEGER NOT NULL DEFAULT 0,
+    n_error INTEGER NOT NULL DEFAULT 0,
+    ewma_latency_ms REAL,
+    last_outcome TEXT,
+    last_ts INTEGER,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0
+);
 """
+
+# EWMA smoothing factor for ewma_latency_ms. Higher reacts faster to
+# recent latency; 0.3 = ~70% weight on history.
+_EWMA_ALPHA = 0.3
 
 
 class BudgetExceeded(Exception):
@@ -107,6 +121,30 @@ class Persistence:
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Idempotent column-level migrations for tables that pre-date the
+        current schema. Each block checks PRAGMA before issuing ALTER.
+        """
+        assert self._conn is not None
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(model_stats)")}
+        if "consecutive_failures" not in cols:
+            self._conn.execute(
+                "ALTER TABLE model_stats"
+                " ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0"
+            )
+        # Memory dedup: legacy rows could insert the same (chat_id, type,
+        # content) repeatedly, polluting the M/L sysprompt with duplicate
+        # preference lines. Collapse on first migration; memory_save now
+        # short-circuits on duplicates so the cleanup is one-time.
+        # NULL chat_id is treated as a single "global" bucket via IS NULL
+        # equivalence (the GROUP BY handles this naturally).
+        self._conn.execute(
+            "DELETE FROM memories WHERE id NOT IN ("
+            "  SELECT MIN(id) FROM memories GROUP BY chat_id, type, content"
+            ")"
+        )
 
     def close(self) -> None:
         if self._conn is not None:
@@ -231,6 +269,69 @@ class Persistence:
         ).fetchall()
         return {row["model"] for row in rows}
 
+    # ----- Model stats (per-attempt outcomes) -----
+
+    def record_attempt(
+        self, *, model: str, outcome: str, latency_ms: float, now_ts: int,
+    ) -> None:
+        """Upsert a row in model_stats. Called on every BudgetGuard chat
+        attempt (success or fail). EWMA latency is updated on success only;
+        first success seeds the EWMA. consecutive_failures resets on success
+        and increments on failure — used by Phase-2 exponential cooldowns.
+        """
+        assert self._conn is not None
+        is_success = outcome == "success"
+        row = self._conn.execute(
+            "SELECT n_success, n_error, ewma_latency_ms, consecutive_failures"
+            " FROM model_stats WHERE model=?",
+            (model,),
+        ).fetchone()
+        if row is None:
+            new_ewma = latency_ms if is_success else None
+            self._conn.execute(
+                "INSERT INTO model_stats"
+                "(model, n_success, n_error, ewma_latency_ms, last_outcome, last_ts,"
+                " consecutive_failures)"
+                " VALUES(?,?,?,?,?,?,?)",
+                (model, 1 if is_success else 0, 0 if is_success else 1,
+                 new_ewma, outcome, now_ts, 0 if is_success else 1),
+            )
+            return
+        prev_ewma = row["ewma_latency_ms"]
+        new_ewma = prev_ewma
+        if is_success:
+            new_ewma = (latency_ms if prev_ewma is None
+                        else _EWMA_ALPHA * latency_ms + (1 - _EWMA_ALPHA) * prev_ewma)
+        new_cf = 0 if is_success else (row["consecutive_failures"] + 1)
+        self._conn.execute(
+            "UPDATE model_stats SET"
+            " n_success = n_success + ?,"
+            " n_error = n_error + ?,"
+            " ewma_latency_ms = ?,"
+            " last_outcome = ?,"
+            " last_ts = ?,"
+            " consecutive_failures = ?"
+            " WHERE model = ?",
+            (1 if is_success else 0, 0 if is_success else 1,
+             new_ewma, outcome, now_ts, new_cf, model),
+        )
+
+    def model_stats_for(self, models: list[str]) -> dict[str, dict]:
+        """Return a {model: stats_dict} for the requested slugs. Models
+        without a row are absent — callers treat as cold-start.
+        """
+        assert self._conn is not None
+        if not models:
+            return {}
+        placeholders = ",".join("?" * len(models))
+        rows = self._conn.execute(
+            f"SELECT model, n_success, n_error, ewma_latency_ms,"
+            f" last_outcome, last_ts, consecutive_failures"
+            f" FROM model_stats WHERE model IN ({placeholders})",
+            list(models),
+        ).fetchall()
+        return {r["model"]: dict(r) for r in rows}
+
     # ----- Traces -----
 
     def log_trace(
@@ -265,7 +366,16 @@ class Persistence:
         applied_by: str,
         last_used_ts: int | None = None,
     ) -> int:
+        """Insert a memory row, deduping on (chat_id, type, content). If a
+        row with that triple already exists, return its existing id without
+        inserting. NULL chat_id matches NULL chat_id via SQL ``IS``."""
         assert self._conn is not None
+        existing = self._conn.execute(
+            "SELECT id FROM memories WHERE chat_id IS ? AND type=? AND content=?",
+            (chat_id, type, content),
+        ).fetchone()
+        if existing is not None:
+            return int(existing["id"])
         cur = self._conn.execute(
             "INSERT INTO memories(type, content, source, chat_id, created_ts, last_used_ts, applied_by)"
             " VALUES(?,?,?,?,?,?,?)",

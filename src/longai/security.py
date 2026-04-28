@@ -115,6 +115,56 @@ def sanitize_outbound(text: str) -> str:
     return out
 
 
+class StreamSanitizer:
+    """Incremental sanitizer for streaming model output.
+
+    Every secret pattern we care about (wallet, private-key, RPC URL,
+    seed phrase) is *atomic* — it fits on a single line. So we emit only
+    complete lines: each line is sanitized in full before any of it
+    leaves this object. The trailing partial line is held until ``flush``.
+
+    Trade-off: streaming granularity is line, not token. For a single
+    long paragraph the user only sees output once it's complete. In
+    practice the model emits paragraph breaks (\\n\\n) and the user
+    sees output as paragraphs land, which is plenty interactive.
+
+    Usage:
+        s = StreamSanitizer()
+        for chunk in stream:
+            piece = s.feed(chunk)
+            if piece:
+                print(piece, end="", flush=True)
+        print(s.flush(), end="", flush=True)
+    """
+
+    def __init__(self) -> None:
+        self._buffer: str = ""
+        self._emitted_buffer_chars: int = 0
+
+    def feed(self, chunk: str) -> str:
+        """Append a chunk; return any newly-completed sanitized lines."""
+        if not chunk:
+            return ""
+        self._buffer += chunk
+        last_nl = self._buffer.rfind("\n", self._emitted_buffer_chars)
+        if last_nl < 0:
+            return ""
+        end = last_nl + 1  # include the newline
+        full = sanitize_outbound(self._buffer[:end])
+        prev = sanitize_outbound(self._buffer[:self._emitted_buffer_chars])
+        self._emitted_buffer_chars = end
+        return full[len(prev):]
+
+    def flush(self) -> str:
+        """End-of-stream: sanitize and emit any trailing partial line."""
+        if self._emitted_buffer_chars >= len(self._buffer):
+            return ""
+        full = sanitize_outbound(self._buffer)
+        prev = sanitize_outbound(self._buffer[:self._emitted_buffer_chars])
+        self._emitted_buffer_chars = len(self._buffer)
+        return full[len(prev):]
+
+
 def sanitize_tool_output(text: str) -> str:
     """Sanitize tool-call output before feeding into next-turn context.
 
