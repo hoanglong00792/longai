@@ -165,3 +165,5 @@ model routing, persistence layout, and observability.
 
 The twelve non-negotiable rules — what won't change, ever — are in
 [`INVARIANTS.md`](./INVARIANTS.md).
+
+Notable changes per release: [`CHANGELOG.md`](./CHANGELOG.md).

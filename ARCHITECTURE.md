@@ -73,8 +73,22 @@ bump it up → `BudgetGuard.chat(tier=...)` picks the chain accordingly.
 SQLite under `~/.longai/state.db` holds messages (sliding window for context),
 debits (daily spend ledger for budget enforcement), cooldowns (per-model bench
 periods after retryable failures), memories (with `propose-don't-apply` per
-I7), and traces (one row per `Loop.run`). WAL mode, no ORM, hand-written
-migrations in `MIGRATIONS.md`.
+I7), and traces (one row per `Loop.run`). WAL mode, no ORM.
+
+### Migrations
+
+Hand-written `ALTER TABLE` snippets. There is no migrations framework — the
+schema stays flat until at least three migrations exist (per the rationale in
+`INVARIANTS.md` § "On adding new invariants").
+
+- **v0 → v1 (initial schema)** — created by `persistence.py:Persistence._init_schema()` on first run.
+- *(no migrations yet)*
+
+When you need to migrate:
+
+1. Add a subsection here with the SQL.
+2. Bump a `schema_version` row in a `meta` table (add the table when needed).
+3. Run the SQL in `Persistence._init_schema()` guarded by a version check.
 
 ---
 
