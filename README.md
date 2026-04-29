@@ -144,11 +144,27 @@ applies them automatically — you review and approve.
 
 ## Tests
 
+One command runs everything — pytest + every live feature script + a tier-1
+live replay sweep:
+
 ```bash
-arch -arm64 .venv/bin/python -m pytest -q                          # unit tests
+./scripts/test_all.sh                                              # full run
+./scripts/test_all.sh --skip-live                                  # CI-friendly: pytest + offline scripts only (~5s)
+./scripts/test_all.sh --skip-replay                                # everything except the long live sweep
+```
+
+Individual layers (each script reports PASS/FAIL and exits non-zero on assertion failure):
+
+```bash
+arch -arm64 .venv/bin/python -m pytest -q                          # unit tests (~306)
+./scripts/test_features.sh                                         # all live feature scripts + tier-1 replay
+./scripts/test_learn.sh                                            # longai learn lifecycle (sandbox DB → propose → apply → dedup)
+./scripts/test_chat_streaming.sh                                   # chat REPL streaming round-trip
+./scripts/test_dryrun.sh                                           # config validation, no LLM
+./scripts/test_models_cache.sh                                     # free-models cache, no network
 bash scripts/check_i3.sh                                           # I3 chokepoint enforcement
-bash scripts/live_replay.sh --tier 1                               # 2 smoke cases against real API
-bash scripts/live_replay.sh --reset-cooldowns --throttle 10        # full sweep
+bash scripts/live_replay.sh --tier 1                               # tier-1 smoke against real API
+bash scripts/live_replay.sh --reset-cooldowns --throttle 10        # full live sweep (all tiers)
 bash scripts/live_replay.sh --ids smoke_math,smoke_greeting        # re-run specific cases
 ```
 
